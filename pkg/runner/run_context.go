@@ -269,6 +269,14 @@ func (rc *RunContext) startHostEnvironment() common.Executor {
 	}
 }
 
+// emulatesHostedRunner reports whether the job container stands in for a
+// GitHub-hosted runner VM (a runs-on platform image) rather than running a
+// job's own `container:`. A hosted VM has an init that reaps orphaned
+// processes; GitHub runs a `container:` job with no init, so neither does act.
+func (rc *RunContext) emulatesHostedRunner(ctx context.Context) bool {
+	return rc.containerImage(ctx) == ""
+}
+
 func (rc *RunContext) startJobContainer() common.Executor {
 	return func(ctx context.Context) error {
 		rc.setRunnerEnvironment(runnerEnvironmentHosted)
@@ -427,6 +435,7 @@ func (rc *RunContext) startJobContainer() common.Executor {
 			UsernsMode:     rc.Config.UsernsMode,
 			Platform:       rc.Config.ContainerArchitecture,
 			Options:        rc.options(ctx),
+			Init:           rc.emulatesHostedRunner(ctx),
 		})
 		if rc.JobContainer == nil {
 			return errors.New("Failed to create job container")

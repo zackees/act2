@@ -1,0 +1,24 @@
+name: job-container-init
+on: push
+
+jobs:
+  # A runs-on job stands in for a GitHub-hosted VM, whose init reaps orphans.
+  hosted-runner-reaps-orphans:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          sh -c 'sleep 1 & echo $! > /tmp/orphan'
+          sleep 3
+          pid=$(cat /tmp/orphan)
+          if [ -e "/proc/$pid/stat" ]; then
+            state=$(cut -d' ' -f3 "/proc/$pid/stat")
+            echo "orphan $pid was not reaped (state $state)"
+            [ "$state" != Z ]
+          fi
+
+  # GitHub runs a `container:` job with `tail -f /dev/null` as PID 1 and no init.
+  job-container-has-no-init:
+    runs-on: ubuntu-latest
+    container: node:16-buster-slim
+    steps:
+      - run: '[ "$(cat /proc/1/comm)" = tail ]'

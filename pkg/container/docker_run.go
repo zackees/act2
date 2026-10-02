@@ -468,6 +468,9 @@ func (cr *containerReference) create(capAdd []string, capDrop []string) common.E
 			UsernsMode:   container.UsernsMode(input.UsernsMode),
 			PortBindings: convertPortMap(input.PortBindings),
 		}
+		if input.Init {
+			hostConfig.Init = &input.Init
+		}
 		logger.Debugf("Common container.HostConfig ==> %+v", hostConfig)
 
 		config, hostConfig, err := cr.mergeContainerConfigs(ctx, config, hostConfig)
