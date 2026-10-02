@@ -69,6 +69,8 @@ func (*LinuxContainerEnvironmentExtensions) GetRunnerContext(ctx context.Context
 		"arch":       RunnerArch(ctx),
 		"temp":       "/tmp",
 		"tool_cache": "/opt/hostedtoolcache",
+		// act's runner images emulate GitHub-hosted runners.
+		"environment": "github-hosted",
 	}
 }
 

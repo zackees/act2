@@ -1,0 +1,9 @@
+name: runner-environment-self-hosted
+on: push
+
+jobs:
+  # act's `-self-hosted` host mode is a self-hosted runner.
+  default:
+    runs-on: ubuntu-latest
+    steps:
+      - run: '[ "$RUNNER_ENVIRONMENT" = self-hosted ] || { echo "RUNNER_ENVIRONMENT=$RUNNER_ENVIRONMENT"; exit 1; }'

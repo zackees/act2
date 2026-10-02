@@ -1,0 +1,17 @@
+name: runner-environment-hosted
+on: push
+
+jobs:
+  # A container platform emulates a GitHub-hosted runner.
+  default:
+    runs-on: ubuntu-latest
+    steps:
+      - run: '[ "$RUNNER_ENVIRONMENT" = github-hosted ] || { echo "RUNNER_ENVIRONMENT=$RUNNER_ENVIRONMENT"; exit 1; }'
+      - run: '[ "${{ runner.environment }}" = github-hosted ] || exit 1'
+  # A value the workflow sets itself wins.
+  explicit:
+    runs-on: ubuntu-latest
+    env:
+      RUNNER_ENVIRONMENT: custom
+    steps:
+      - run: '[ "$RUNNER_ENVIRONMENT" = custom ] || { echo "RUNNER_ENVIRONMENT=$RUNNER_ENVIRONMENT"; exit 1; }'
