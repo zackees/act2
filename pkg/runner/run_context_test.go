@@ -738,4 +738,3 @@ func TestSetRunnerEnvironment(t *testing.T) {
 	rc.setRunnerEnvironment(runnerEnvironmentHosted)
 	assert.Equal(t, "custom", rc.GetEnv()["RUNNER_ENVIRONMENT"])
 }
-
