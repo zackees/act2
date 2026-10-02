@@ -302,6 +302,7 @@ func TestRunEvent(t *testing.T) {
 		{workdir, "actions-environment-and-context-tests", "push", "", platforms, secrets},
 		{workdir, "uses-action-with-pre-and-post-step", "push", "", platforms, secrets},
 		{workdir, "evalenv", "push", "", platforms, secrets},
+		{workdir, "runner-environment/hosted", "push", "", platforms, secrets},
 		{workdir, "docker-action-custom-path", "push", "", platforms, secrets},
 		{workdir, "GITHUB_ENV-use-in-env-ctx", "push", "", platforms, secrets},
 		{workdir, "ensure-post-steps", "push", "Job 'second-post-step-should-fail' failed", platforms, secrets},
@@ -569,6 +570,7 @@ func TestRunEventHostEnvironment(t *testing.T) {
 			{workdir, "if-expressions", "push", "Job 'mytest' failed", platforms, secrets},
 			{workdir, "uses-action-with-pre-and-post-step", "push", "", platforms, secrets},
 			{workdir, "evalenv", "push", "", platforms, secrets},
+			{workdir, "runner-environment/self-hosted", "push", "", platforms, secrets},
 			{workdir, "ensure-post-steps", "push", "Job 'second-post-step-should-fail' failed", platforms, secrets},
 		}...)
 	}

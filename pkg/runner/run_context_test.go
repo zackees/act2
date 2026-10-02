@@ -726,3 +726,15 @@ func TestSetRuntimeVariablesWithRunID(t *testing.T) {
 	assert.True(t, ok, "scp claim exists")
 	assert.Equal(t, "Actions.Results:45:45", scp, "contains expected scp claim")
 }
+
+// RUNNER_ENVIRONMENT mirrors GitHub for a job container, and a value the
+// workflow or --env sets wins.
+func TestSetRunnerEnvironment(t *testing.T) {
+	rc := &RunContext{Env: map[string]string{}}
+	rc.setRunnerEnvironment(runnerEnvironmentHosted)
+	assert.Equal(t, "github-hosted", rc.GetEnv()["RUNNER_ENVIRONMENT"])
+
+	rc = &RunContext{Env: map[string]string{"RUNNER_ENVIRONMENT": "custom"}}
+	rc.setRunnerEnvironment(runnerEnvironmentHosted)
+	assert.Equal(t, "custom", rc.GetEnv()["RUNNER_ENVIRONMENT"])
+}

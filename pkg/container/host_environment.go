@@ -452,6 +452,8 @@ func (e *HostEnvironment) GetRunnerContext(_ context.Context) map[string]interfa
 		"arch":       goArchToActionArch(runtime.GOARCH),
 		"temp":       e.TmpDir,
 		"tool_cache": e.ToolCache,
+		// GitHub's value for a runner on the user's own machine.
+		"environment": "self-hosted",
 	}
 }
 

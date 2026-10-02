@@ -89,6 +89,23 @@ func (rc *RunContext) GetEnv() map[string]string {
 	return rc.Env
 }
 
+// runnerEnvironmentHosted is what GitHub reports in RUNNER_ENVIRONMENT on a
+// GitHub-hosted runner, which act's runner images emulate.
+const runnerEnvironmentHosted = "github-hosted"
+
+// setRunnerEnvironment sets RUNNER_ENVIRONMENT for a job container the way
+// GitHub does, unless the workflow or --env already set it. Upstream act sets
+// none, so every action whose default keys on it (setup-uv's
+// `enable-cache: auto` caches only on GitHub-hosted runners) behaves as if on an
+// unknown runner. Host mode needs no call: it copies every `runner` context
+// field, `environment` = "self-hosted" included, into RUNNER_* variables.
+func (rc *RunContext) setRunnerEnvironment(value string) {
+	env := rc.GetEnv()
+	if _, ok := env["RUNNER_ENVIRONMENT"]; !ok {
+		env["RUNNER_ENVIRONMENT"] = value
+	}
+}
+
 func (rc *RunContext) jobContainerName() string {
 	return createContainerName("act", rc.String())
 }
@@ -254,6 +271,7 @@ func (rc *RunContext) startHostEnvironment() common.Executor {
 
 func (rc *RunContext) startJobContainer() common.Executor {
 	return func(ctx context.Context) error {
+		rc.setRunnerEnvironment(runnerEnvironmentHosted)
 		logger := common.Logger(ctx)
 		image := rc.platformImage(ctx)
 		rawLogger := logger.WithField("raw_output", true)
