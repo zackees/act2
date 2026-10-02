@@ -1,4 +1,7 @@
 version: 2
+# The fork's repository is act2, but it ships act: the binary, the archive
+# names and the dist/ paths every workflow uses all stay act_*.
+project_name: act
 before:
   hooks:
     - go mod tidy
