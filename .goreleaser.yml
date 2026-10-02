@@ -1,4 +1,7 @@
 version: 2
+# The fork's repository is act2, but it ships act: the binary, the archive
+# names and the dist/ paths every workflow uses all stay act_*.
+project_name: act
 before:
   hooks:
     - go mod tidy
@@ -48,5 +51,7 @@ changelog:
     - title: 'Other'
       order: 999
 release:
-  prerelease: auto
+  # act2 tags carry a semver suffix (v0.2.89-act2.1); they are real releases,
+  # not prereleases, so consumers can resolve the latest one.
+  prerelease: false
   mode: append
