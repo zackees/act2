@@ -124,6 +124,7 @@ func createRootCommand(ctx context.Context, input *Input, version string) *cobra
 	rootCmd.PersistentFlags().StringVarP(&input.cacheServerAddr, "cache-server-addr", "", common.GetOutboundIP().String(), "Defines the address to which the cache server binds.")
 	rootCmd.PersistentFlags().Uint16VarP(&input.cacheServerPort, "cache-server-port", "", 0, "Defines the port where the artifact server listens. 0 means a randomly available port.")
 	rootCmd.PersistentFlags().StringVarP(&input.actionCachePath, "action-cache-path", "", filepath.Join(CacheHomeDir, "act"), "Defines the path where the actions get cached and host workspaces created.")
+	rootCmd.PersistentFlags().StringVarP(&input.workflowOverlay, "workflow-overlay", "", "", "Directory mirroring the workspace: act reads local reusable workflows and local action metadata (action.yml) from it when present, while jobs still see the unmodified workspace")
 	rootCmd.PersistentFlags().BoolVarP(&input.actionOfflineMode, "action-offline-mode", "", false, "If action contents exists, it will not be fetch and pull again. If turn on this, will turn off force pull")
 	rootCmd.PersistentFlags().StringVarP(&input.networkName, "network", "", "host", "Sets a docker network name. Defaults to host.")
 	rootCmd.PersistentFlags().BoolVarP(&input.useNewActionCache, "use-new-action-cache", "", false, "Enable using the new Action Cache for storing Actions locally")
@@ -613,6 +614,7 @@ func newRunCommand(ctx context.Context, input *Input) func(*cobra.Command, []str
 			ReuseContainers:                    input.reuseContainers,
 			Workdir:                            input.Workdir(),
 			ActionCacheDir:                     input.actionCachePath,
+			WorkflowOverlay:                    input.workflowOverlay,
 			ActionOfflineMode:                  input.actionOfflineMode,
 			BindWorkdir:                        input.bindWorkdir,
 			LogOutput:                          !input.noOutput,

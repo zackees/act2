@@ -1,0 +1,7 @@
+name: overlay copy
+description: what act reads in place of the workspace's action.yml
+runs:
+  using: composite
+  steps:
+    - run: echo "read the overlay"
+      shell: bash

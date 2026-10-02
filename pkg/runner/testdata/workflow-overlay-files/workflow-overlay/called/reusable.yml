@@ -1,0 +1,7 @@
+name: overlay copy
+on: workflow_call
+jobs:
+  called:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "read the overlay"
