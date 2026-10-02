@@ -30,6 +30,9 @@ type NewContainerInput struct {
 	NetworkAliases []string
 	ExposedPorts   nat.PortSet
 	PortBindings   nat.PortMap
+	// Init runs an init process as PID 1 that reaps orphaned children, as a
+	// GitHub-hosted runner VM's init does. container.options can override it.
+	Init bool
 }
 
 // FileEntry is a file to copy to a container
