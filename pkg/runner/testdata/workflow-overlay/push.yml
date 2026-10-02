@@ -1,0 +1,15 @@
+name: workflow-overlay
+on: push
+
+jobs:
+  local-action:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      # act runs the overlay's action.yml ...
+      - uses: ./workflow-overlay/action
+      # ... while the job's workspace keeps the original file.
+      - run: grep -q "workspace copy" workflow-overlay/action/action.yml
+
+  reusable:
+    uses: ./workflow-overlay/called/reusable.yml

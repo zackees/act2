@@ -56,6 +56,7 @@ type Input struct {
 	replaceGheActionTokenWithGithubCom string
 	matrix                             []string
 	actionCachePath                    string
+	workflowOverlay                    string
 	actionOfflineMode                  bool
 	logPrefixJobID                     bool
 	networkName                        string

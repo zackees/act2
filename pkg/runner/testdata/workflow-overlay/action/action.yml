@@ -1,0 +1,7 @@
+name: workspace copy
+description: the workspace copy; act must read the overlay's instead
+runs:
+  using: composite
+  steps:
+    - run: echo "read the workspace copy, not the overlay"; exit 1
+      shell: bash

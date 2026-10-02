@@ -194,6 +194,7 @@ func (j *TestJobFileInfo) runTest(ctx context.Context, t *testing.T, cfg *Config
 		ContainerArchitecture: cfg.ContainerArchitecture,
 		Matrix:                cfg.Matrix,
 		ActionCache:           cfg.ActionCache,
+		WorkflowOverlay:       cfg.WorkflowOverlay,
 	}
 
 	runner, err := New(runnerConfig)
@@ -507,6 +508,19 @@ func TestFetchFailureIsJobFailure(t *testing.T) {
 			assert.True(t, hasJobResult, "jobResult not found")
 		})
 	}
+}
+
+// A workflow overlay replaces what act reads (local action metadata, local
+// reusable workflows) without changing the workspace a job sees.
+func TestRunEventWorkflowOverlay(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test")
+	}
+
+	overlay, err := filepath.Abs(filepath.Join(workdir, "workflow-overlay-files"))
+	assert.NoError(t, err)
+	table := TestJobFileInfo{workdir, "workflow-overlay", "push", "", platforms, secrets}
+	table.runTest(context.Background(), t, &Config{Secrets: secrets, WorkflowOverlay: overlay})
 }
 
 func TestRunEventHostEnvironment(t *testing.T) {

@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path"
+	"path/filepath"
 	"regexp"
 	"sync"
 
@@ -17,7 +18,27 @@ import (
 )
 
 func newLocalReusableWorkflowExecutor(rc *RunContext) common.Executor {
-	return newReusableWorkflowExecutor(rc, rc.Config.Workdir, rc.Run.Job().Uses)
+	uses := rc.Run.Job().Uses
+	if _, ok := rc.overlayFile(uses); ok {
+		return newReusableWorkflowExecutor(rc, rc.Config.WorkflowOverlay, uses)
+	}
+	return newReusableWorkflowExecutor(rc, rc.Config.Workdir, uses)
+}
+
+// overlayFile returns the path of a workspace-relative file in
+// Config.WorkflowOverlay, when the overlay is set and holds that file. act
+// reads such files in place of the workspace's own; the workspace that jobs
+// see is never changed.
+func (rc *RunContext) overlayFile(relative string) (string, bool) {
+	if rc.Config.WorkflowOverlay == "" {
+		return "", false
+	}
+	candidate := filepath.Join(rc.Config.WorkflowOverlay, filepath.FromSlash(relative))
+	info, err := os.Stat(candidate)
+	if err != nil || !info.Mode().IsRegular() {
+		return "", false
+	}
+	return candidate, true
 }
 
 func newRemoteReusableWorkflowExecutor(rc *RunContext) common.Executor {

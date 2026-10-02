@@ -1,0 +1,7 @@
+name: workspace copy
+on: workflow_call
+jobs:
+  called:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "read the workspace copy, not the overlay"; exit 1

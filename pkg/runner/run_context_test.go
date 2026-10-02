@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"runtime"
 	"sort"
@@ -737,4 +738,24 @@ func TestSetRunnerEnvironment(t *testing.T) {
 	rc = &RunContext{Env: map[string]string{"RUNNER_ENVIRONMENT": "custom"}}
 	rc.setRunnerEnvironment(runnerEnvironmentHosted)
 	assert.Equal(t, "custom", rc.GetEnv()["RUNNER_ENVIRONMENT"])
+}
+
+func TestOverlayFile(t *testing.T) {
+	overlay := t.TempDir()
+	assert.NoError(t, os.MkdirAll(filepath.Join(overlay, "a", "dir"), 0o755))
+	assert.NoError(t, os.WriteFile(filepath.Join(overlay, "a", "action.yml"), []byte("x"), 0o600))
+
+	rc := &RunContext{Config: &Config{}}
+	_, ok := rc.overlayFile("a/action.yml")
+	assert.False(t, ok, "no overlay configured")
+
+	rc.Config.WorkflowOverlay = overlay
+	got, ok := rc.overlayFile("./a/action.yml")
+	assert.True(t, ok)
+	assert.Equal(t, filepath.Join(overlay, "a", "action.yml"), got)
+
+	_, ok = rc.overlayFile("a/action.yaml")
+	assert.False(t, ok, "a file the overlay lacks falls back to the workspace")
+	_, ok = rc.overlayFile("a/dir")
+	assert.False(t, ok, "only regular files override")
 }

@@ -23,6 +23,7 @@ type Config struct {
 	Actor                              string                       // the user that triggered the event
 	Workdir                            string                       // path to working directory
 	ActionCacheDir                     string                       // path used for caching action contents
+	WorkflowOverlay                    string                       // directory mirroring Workdir whose files act reads in place of the workspace's local reusable workflows and action metadata
 	ActionOfflineMode                  bool                         // when offline, use caching action contents
 	BindWorkdir                        bool                         // bind the workdir to the job container
 	EventName                          string                       // name of event to run

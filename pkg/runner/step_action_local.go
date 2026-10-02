@@ -73,7 +73,19 @@ func (sal *stepActionLocal) main() common.Executor {
 			}
 		}
 
-		actionModel, err := sal.readAction(ctx, sal.Step, actionDir, "", localReader(ctx), os.WriteFile)
+		containerReader := localReader(ctx)
+		reader := func(filename string) (io.Reader, io.Closer, error) {
+			if overlay, ok := sal.RunContext.overlayFile(path.Join(sal.Step.Uses, filename)); ok {
+				f, err := os.Open(overlay)
+				if err != nil {
+					return nil, nil, err
+				}
+				return f, f, nil
+			}
+			return containerReader(filename)
+		}
+
+		actionModel, err := sal.readAction(ctx, sal.Step, actionDir, "", reader, os.WriteFile)
 		if err != nil {
 			return err
 		}
