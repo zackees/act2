@@ -3,6 +3,9 @@ package container
 import (
 	"context"
 	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/moby/moby/client"
@@ -13,6 +16,53 @@ import (
 
 func init() {
 	log.SetLevel(log.DebugLevel)
+}
+
+func TestImageExistsLocallyPlatformAPI(t *testing.T) {
+	for _, tc := range []struct {
+		name, api, requested, response string
+		status                         int
+		want, wantError, wantQuery     bool
+	}{
+		{"modern-arm", "1.49", "linux/arm64", `{"Os":"linux","Architecture":"arm64"}`, 200, true, false, true},
+		{"modern-missing", "1.49", "linux/arm64", `{"message":"missing platform"}`, 404, false, false, true},
+		{"modern-error", "1.49", "linux/arm64", `{"message":"storage failed"}`, 500, false, true, true},
+		{"modern-ignored-query", "1.49", "linux/arm64", `{"Os":"linux","Architecture":"amd64"}`, 200, false, false, true},
+		{"modern-variant", "1.49", "linux/arm/v7", `{"Os":"linux","Architecture":"arm","Variant":"v7"}`, 200, true, false, true},
+		{"old-arm", "1.48", "linux/arm64", "", 200, false, false, false},
+		{"modern-native", "1.49", "linux/amd64", "", 200, true, false, false},
+		{"any", "1.49", "any", "", 200, true, false, false},
+		{"unspecified", "1.49", "", "", 200, true, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			queried := false
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.URL.Path == "/_ping" {
+					w.Header().Set("API-Version", tc.api)
+					return
+				}
+				assert.True(t, strings.HasSuffix(r.URL.Path, "/images/test/json"))
+				if query := r.URL.Query().Get("platform"); query != "" {
+					queried = true
+					assert.Contains(t, query, `"os":"linux"`)
+					w.WriteHeader(tc.status)
+					_, _ = io.WriteString(w, tc.response)
+					return
+				}
+				_, _ = io.WriteString(w, `{"Os":"linux","Architecture":"amd64"}`)
+			}))
+			defer server.Close()
+			t.Setenv("DOCKER_HOST", server.URL)
+			t.Setenv("DOCKER_API_VERSION", "")
+			t.Setenv("DOCKER_TLS_VERIFY", "")
+			t.Setenv("DOCKER_CERT_PATH", "")
+			exists, err := ImageExistsLocally(context.Background(), "test", tc.requested)
+			assert.Equal(t, tc.want, exists)
+			assert.Equal(t, tc.wantError, err != nil)
+			assert.Equal(t, tc.wantQuery, queried)
+		})
+	}
 }
 
 func TestImageExistsLocally(t *testing.T) {
