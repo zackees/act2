@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -45,6 +46,10 @@ import (
 func NewContainer(input *NewContainerInput) ExecutionsEnvironment {
 	cr := new(containerReference)
 	cr.input = input
+	if input.SourceDir != "" {
+		cr.HostWorkdir = input.SourceDir
+		cr.ContainerWorkdir = input.WorkingDir
+	}
 	return cr
 }
 
@@ -827,6 +832,24 @@ func (cr *containerReference) copyDir(dstPath string, srcPath string, useGitIgno
 func (cr *containerReference) copyContent(dstPath string, files ...*FileEntry) common.Executor {
 	return func(ctx context.Context) error {
 		logger := common.Logger(ctx)
+		// Docker creates implicit archive parents as root. Let the configured
+		// runner create them first so custom shells can move their script.
+		if cr.input.HostedRunner && (cr.UID != 0 || cr.GID != 0) {
+			directories := []string{"mkdir", "-p", "--"}
+			seen := map[string]bool{}
+			for _, file := range files {
+				directory := path.Dir(path.Join(dstPath, file.Name))
+				if !seen[directory] {
+					directories = append(directories, directory)
+					seen[directory] = true
+				}
+			}
+			if len(directories) > 3 {
+				if err := cr.Exec(directories, nil, "", "/")(ctx); err != nil {
+					return fmt.Errorf("prepare runner file directories: %w", err)
+				}
+			}
+		}
 		var buf bytes.Buffer
 		tw := tar.NewWriter(&buf)
 		for _, file := range files {

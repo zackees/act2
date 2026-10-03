@@ -10,6 +10,9 @@ fi
 [ "$(id -u actrunner)" -ne 0 ] || { echo "Hosted runner user must be non-root" >&2; exit 1; }
 mkdir -p /home/actrunner /opt/hostedtoolcache /var/run/act
 chown actrunner:$(id -gn actrunner) /home/actrunner
+if [ -n "$4" ]; then
+  chown actrunner:$(id -gn actrunner) "$4"
+fi
 # Restored completed installs can belong to the preceding root runner.
 # Reconcile only the runner's tool and action stores, never arbitrary binds.
 for store in "$2" "$3"; do

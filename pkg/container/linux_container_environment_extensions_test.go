@@ -3,6 +3,7 @@ package container
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -69,3 +70,16 @@ type typeAssertMockContainer struct {
 
 // Type assert Container + LinuxContainerEnvironmentExtensions implements ExecutionsEnvironment
 var _ ExecutionsEnvironment = &typeAssertMockContainer{}
+
+func TestHostedWorkspacePaths(t *testing.T) {
+	checkout := filepath.Join(t.TempDir(), "checkout")
+	ext := &LinuxContainerEnvironmentExtensions{
+		HostWorkdir: checkout, ContainerWorkdir: "/home/actrunner/work/checkout/checkout",
+	}
+	assert.Equal(t, ext.ContainerWorkdir, ext.ToContainerPath(checkout))
+	assert.Equal(t, ext.ContainerWorkdir+"/nested/file", ext.ToContainerPath(filepath.Join(checkout, "nested", "file")))
+	legacy := &LinuxContainerEnvironmentExtensions{}
+	for _, outside := range []string{filepath.Dir(checkout), checkout + "-sibling", filepath.Join(checkout, "..", "other")} {
+		assert.Equal(t, legacy.ToContainerPath(outside), ext.ToContainerPath(outside))
+	}
+}

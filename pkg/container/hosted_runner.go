@@ -15,7 +15,7 @@ import (
 )
 
 const hostedRunnerUser = "actrunner"
-const hostedRunnerHome = "/home/actrunner"
+const hostedRunnerHome = HostedRunnerHome
 
 //go:embed hosted_runner.sh
 var hostedRunnerSetup string
@@ -42,7 +42,7 @@ func (cr *containerReference) provisionHostedRunner() common.Executor {
 				cr.protectedPaths = append(cr.protectedPaths, mounted.Destination)
 			}
 		}
-		if !cr.mayChown(hostedRunnerHome) {
+		if !cr.mayOwnDirectory(hostedRunnerHome) {
 			return fmt.Errorf("hosted runner cannot provision bind-mounted HOME %s", hostedRunnerHome)
 		}
 		// Account databases, their locks/backups and sudo configuration must
@@ -57,7 +57,11 @@ func (cr *containerReference) provisionHostedRunner() common.Executor {
 		if !cr.mayChown(actions) {
 			actions = ""
 		}
-		return cr.Exec([]string{"sh", "-ec", hostedRunnerSetup, "act-hosted-runner", cr.input.WorkingDir, toolcache, actions}, nil, "0", "/")(ctx)
+		parent := path.Dir(cr.input.WorkingDir)
+		if !strings.HasPrefix(parent, hostedRunnerHome+"/") || !cr.mayOwnDirectory(parent) {
+			parent = ""
+		}
+		return cr.Exec([]string{"sh", "-ec", hostedRunnerSetup, "act-hosted-runner", cr.input.WorkingDir, toolcache, actions, parent}, nil, "0", "/")(ctx)
 	}
 }
 
@@ -89,4 +93,29 @@ func (cr *containerReference) mayChown(dest string) bool {
 func pathsOverlap(first, second string) bool {
 	first, second = path.Clean(first), path.Clean(second)
 	return first == "/" || second == "/" || first == second || strings.HasPrefix(first, second+"/") || strings.HasPrefix(second, first+"/")
+}
+
+// Non-recursive directory ownership may change above a bound child, but never
+// at or below the bind itself. Recursive mutations use mayChown instead.
+func (cr *containerReference) mayOwnDirectory(dest string) bool {
+	dest = path.Clean(dest)
+	targets := append([]string{}, cr.protectedPaths...)
+	for _, bind := range cr.input.Binds {
+		parts := strings.Split(bind, ":")
+		if len(parts) < 2 {
+			continue
+		}
+		target := parts[len(parts)-1]
+		if !strings.HasPrefix(target, "/") {
+			target = parts[len(parts)-2]
+		}
+		targets = append(targets, target)
+	}
+	for _, target := range targets {
+		target = path.Clean(target)
+		if target == "/" || dest == target || strings.HasPrefix(dest, target+"/") {
+			return false
+		}
+	}
+	return true
 }

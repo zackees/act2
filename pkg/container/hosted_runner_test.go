@@ -15,6 +15,9 @@ import (
 )
 
 func TestHostedRunnerIdentity(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Docker hosted-runner integration")
+	}
 	for _, hosted := range []bool{true, false} {
 		t.Run(fmt.Sprint(hosted), func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
@@ -56,6 +59,9 @@ func TestHostedRunnerDoesNotChownBinds(t *testing.T) {
 // Root-owned completed caches remain usable, and a bound checkout's existing
 // ownership survives the migration to the ordinary runner identity.
 func TestHostedRunnerSeedAndBoundOwnership(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Docker hosted-runner integration")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	name := fmt.Sprintf("act2-bound-user-test-%d", time.Now().UnixNano())
@@ -85,6 +91,9 @@ func TestHostedRunnerSeedAndBoundOwnership(t *testing.T) {
 }
 
 func TestHostedRunnerProtectsOptionMounts(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Docker hosted-runner integration")
+	}
 	ctx := context.Background()
 	cli, err := GetDockerClient(ctx)
 	require.NoError(t, err)
@@ -122,6 +131,42 @@ func TestHostedRunnerProtectsOptionMounts(t *testing.T) {
 				require.NoError(t, err, output.String())
 				assert.False(t, cr.mayChown(target))
 			}
+		})
+	}
+}
+
+// A hosted runner owns its private workspace parent and can move generated
+// scripts, including a custom shell that turns the script into a Dockerfile.
+func TestHostedRunnerWorkspaceLayout(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Docker hosted-runner integration")
+	}
+	cases := []struct {
+		name, workdir, command string
+		generated              bool
+	}{
+		{name: "private-parent", workdir: "/home/actrunner/work/repo/repo", command: `touch "$(dirname "$PWD")/sibling"`},
+		{name: "generated-script", workdir: "/tmp/workspace", generated: true, command: `mv /var/run/act/workflow/movable ./Dockerfile`},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			defer cancel()
+			var output bytes.Buffer
+			cr := NewContainer(&NewContainerInput{
+				Image:      "docker.io/catthehacker/ubuntu@sha256:4f2d5083a9d10d018c1c511eb8665cd480553c11975e78fd903a46daa830768b",
+				Name:       fmt.Sprintf("act2-workspace-user-test-%d", time.Now().UnixNano()),
+				Entrypoint: []string{"tail", "-f", "/dev/null"}, WorkingDir: test.workdir, HostedRunner: true,
+				Stdout: &output, Stderr: &output,
+			})
+			require.NoError(t, cr.Create(nil, nil)(ctx))
+			defer func() { assert.NoError(t, cr.Close()(context.Background())) }()
+			defer func() { assert.NoError(t, cr.Remove()(context.Background())) }()
+			require.NoError(t, cr.Start(false)(ctx), output.String())
+			if test.generated {
+				require.NoError(t, cr.Copy("/var/run/act", &FileEntry{Name: "workflow/movable", Mode: 0755, Body: "FROM ubuntu:latest\n"})(ctx))
+			}
+			require.NoError(t, cr.Exec([]string{"bash", "-ec", test.command}, nil, "", "")(ctx), output.String())
 		})
 	}
 }

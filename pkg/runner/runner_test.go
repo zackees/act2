@@ -296,7 +296,7 @@ func TestRunEvent(t *testing.T) {
 		{workdir, "environment-files-parser-bug", "push", "", platforms, secrets},
 		{workdir, "non-existent-action", "push", "Job 'nopanic' failed", platforms, secrets},
 		{workdir, "outputs", "push", "", platforms, secrets},
-		{workdir, "networking", "push", "", platforms, secrets},
+		{workdir, "networking", "push", "", map[string]string{"ubuntu-latest": "docker.io/catthehacker/ubuntu@sha256:4f2d5083a9d10d018c1c511eb8665cd480553c11975e78fd903a46daa830768b"}, secrets},
 		{workdir, "steps-context/conclusion", "push", "", platforms, secrets},
 		{workdir, "steps-context/outcome", "push", "", platforms, secrets},
 		{workdir, "job-status-check", "push", "job 'fail' failed", platforms, secrets},
@@ -328,7 +328,7 @@ func TestRunEvent(t *testing.T) {
 		// services
 		{workdir, "services", "push", "", platforms, secrets},
 		{workdir, "services-empty-image", "push", "", platforms, secrets},
-		{workdir, "services-host-network", "push", "", platforms, secrets},
+		{workdir, "services-host-network", "push", "", map[string]string{"ubuntu-latest": "docker.io/catthehacker/ubuntu@sha256:4f2d5083a9d10d018c1c511eb8665cd480553c11975e78fd903a46daa830768b"}, secrets},
 		{workdir, "services-with-container", "push", "", platforms, secrets},
 		{workdir, "mysql-service-container-with-health-check", "push", "", platforms, secrets},
 
