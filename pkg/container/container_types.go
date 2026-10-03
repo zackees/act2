@@ -33,6 +33,9 @@ type NewContainerInput struct {
 	// Init runs an init process as PID 1 that reaps orphaned children, as a
 	// GitHub-hosted runner VM's init does. container.options can override it.
 	Init bool
+	// HostedRunner provisions an ordinary user for a simulated runner VM.
+	// Explicit job containers and Docker actions retain their image user.
+	HostedRunner bool
 }
 
 // FileEntry is a file to copy to a container
