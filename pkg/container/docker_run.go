@@ -581,7 +581,7 @@ func (cr *containerReference) exec(cmd []string, env map[string]string, user, wo
 		}
 		logger.Debugf("Working directory '%s'", wd)
 
-		// Docker exec starts with umask 0000, unlike a GitHub runner. Set the
+		// Docker exec does not inherit the hosted runner's umask. Set the
 		// runner mask for scripts and JavaScript actions alike, then replace
 		// the shell so arguments, signals and exit status belong to the command.
 		// Bash retains action-input environment names containing hyphens;
