@@ -33,6 +33,9 @@ type NewContainerInput struct {
 	// Init runs an init process as PID 1 that reaps orphaned children, as a
 	// GitHub-hosted runner VM's init does. container.options can override it.
 	Init bool
+	// RunnerUmask gives emulated GitHub-hosted runners the VM's 0022 mask.
+	// Custom job containers and Docker actions retain Docker's own behavior.
+	RunnerUmask bool
 }
 
 // FileEntry is a file to copy to a container

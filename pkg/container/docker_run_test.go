@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -174,6 +175,54 @@ func TestDockerExecFailure(t *testing.T) {
 
 	conn.AssertExpectations(t)
 	cli.AssertExpectations(t)
+}
+
+func TestDockerExecSetsRunnerUmaskWithoutReinterpretingArguments(t *testing.T) {
+	ctx := context.Background()
+	conn := &mockConn{}
+	cli := &mockDockerClient{}
+	command := []string{"printf", "%s", "literal ; $HOME"}
+	cli.On("ExecCreate", ctx, "123", mock.MatchedBy(func(opts client.ExecCreateOptions) bool {
+		return assert.Equal(t, []string{"/bin/sh", "-c", `umask 0022; exec "$@"`, "act2-exec", "printf", "%s", "literal ; $HOME"}, opts.Cmd) &&
+			assert.Equal(t, "user", opts.User) && assert.Equal(t, "/work", opts.WorkingDir)
+	})).Return(client.ExecCreateResult{ID: "id"}, nil)
+	cli.On("ExecAttach", ctx, "id", mock.Anything).Return(client.ExecAttachResult{
+		HijackedResponse: client.HijackedResponse{Conn: conn, Reader: bufio.NewReader(strings.NewReader(""))},
+	}, nil)
+	cli.On("ExecInspect", ctx, "id", mock.Anything).Return(client.ExecInspectResult{ExitCode: 0}, nil)
+	cr := &containerReference{id: "123", cli: cli, input: &NewContainerInput{WorkingDir: "/work", RunnerUmask: true}}
+	execute := cr.exec(command, nil, "user", "")
+	assert.NoError(t, execute(ctx))
+	assert.NoError(t, execute(ctx))
+	assert.Equal(t, []string{"printf", "%s", "literal ; $HOME"}, command)
+	cli.AssertExpectations(t)
+}
+
+func TestDockerExecRunnerUmaskLive(t *testing.T) {
+	name := os.Getenv("ACT_TEST_UMASK_CONTAINER")
+	if name == "" {
+		t.Skip("set ACT_TEST_UMASK_CONTAINER to an owned Linux test container")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cli, err := GetDockerClient(ctx)
+	if !assert.NoError(t, err) {
+		return
+	}
+	defer cli.Close()
+	var output bytes.Buffer
+	cr := &containerReference{id: name, cli: cli, input: &NewContainerInput{WorkingDir: "/tmp", Stdout: &output, Stderr: &output, RunnerUmask: true}}
+	command := []string{"/bin/sh", "-c", `printf 'mask=%s\narg=%s\npwd=%s\n' "$(umask)" "$1" "$PWD"; exit 42`, "probe", "literal ; $HOME"}
+	err = cr.exec(command, nil, "", "")(ctx)
+	assert.EqualError(t, err, "exitcode '42': failure")
+	assert.Equal(t, "mask=0022\narg=literal ; $HOME\npwd=/tmp\n", output.String())
+
+	// A job's own container keeps Docker's native execution contract.
+	output.Reset()
+	cr.input.RunnerUmask = false
+	err = cr.exec(command, nil, "", "")(ctx)
+	assert.EqualError(t, err, "exitcode '42': failure")
+	assert.Equal(t, "mask=0000\narg=literal ; $HOME\npwd=/tmp\n", output.String())
 }
 
 func TestDockerCopyTarStream(t *testing.T) {

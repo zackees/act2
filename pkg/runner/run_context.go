@@ -436,6 +436,7 @@ func (rc *RunContext) startJobContainer() common.Executor {
 			Platform:       rc.Config.ContainerArchitecture,
 			Options:        rc.options(ctx),
 			Init:           rc.emulatesHostedRunner(ctx),
+			RunnerUmask:    rc.emulatesHostedRunner(ctx),
 		})
 		if rc.JobContainer == nil {
 			return errors.New("Failed to create job container")

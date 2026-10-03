@@ -6,6 +6,14 @@ jobs:
   hosted-runner-reaps-orphans:
     runs-on: ubuntu-latest
     steps:
+      - name: Hosted runner file permissions
+        run: |
+          [ "$(umask)" = 0022 ]
+          scratch=$(mktemp -d)
+          mkdir "$scratch/cache"
+          touch "$scratch/file"
+          [ "$(stat -c %a "$scratch/cache")" = 755 ]
+          [ "$(stat -c %a "$scratch/file")" = 644 ]
       - run: |
           sh -c 'sleep 1 & echo $! > /tmp/orphan'
           sleep 3
@@ -21,4 +29,5 @@ jobs:
     runs-on: ubuntu-latest
     container: node:16-buster-slim
     steps:
+      - run: '[ "$(umask)" = 0000 ]'
       - run: '[ "$(cat /proc/1/comm)" = tail ]'

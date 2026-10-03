@@ -581,9 +581,18 @@ func (cr *containerReference) exec(cmd []string, env map[string]string, user, wo
 		}
 		logger.Debugf("Working directory '%s'", wd)
 
+		// Docker exec starts with umask 0000, unlike a GitHub runner. Set the
+		// runner mask for scripts and JavaScript actions alike, then replace
+		// the shell so arguments, signals and exit status belong to the command.
+		// An empty command must still be rejected by Docker, not succeed as sh.
+		execCommand := cmd
+		if cr.input.RunnerUmask && len(cmd) > 0 {
+			execCommand = append([]string{"/bin/sh", "-c", `umask 0022; exec "$@"`, "act2-exec"}, cmd...)
+		}
+
 		idResp, err := cr.cli.ExecCreate(ctx, cr.id, client.ExecCreateOptions{
 			User:         user,
-			Cmd:          cmd,
+			Cmd:          execCommand,
 			WorkingDir:   wd,
 			Env:          envList,
 			TTY:          isTerminal,
