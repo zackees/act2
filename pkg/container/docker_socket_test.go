@@ -15,11 +15,14 @@ func init() {
 var originalCommonSocketLocations = CommonSocketLocations
 
 func TestGetSocketAndHostWithSocket(t *testing.T) {
+	t.Setenv("DOCKER_HOST", os.Getenv("DOCKER_HOST"))
+	originalLocations := CommonSocketLocations
+	t.Cleanup(func() { CommonSocketLocations = originalLocations })
 	// Arrange
 	CommonSocketLocations = originalCommonSocketLocations
 	dockerHost := "unix:///my/docker/host.sock"
 	socketURI := "/path/to/my.socket"
-	os.Setenv("DOCKER_HOST", dockerHost)
+	t.Setenv("DOCKER_HOST", dockerHost)
 
 	// Act
 	ret, err := GetSocketAndHost(socketURI)
@@ -30,9 +33,12 @@ func TestGetSocketAndHostWithSocket(t *testing.T) {
 }
 
 func TestGetSocketAndHostNoSocket(t *testing.T) {
+	t.Setenv("DOCKER_HOST", os.Getenv("DOCKER_HOST"))
+	originalLocations := CommonSocketLocations
+	t.Cleanup(func() { CommonSocketLocations = originalLocations })
 	// Arrange
 	dockerHost := "unix:///my/docker/host.sock"
-	os.Setenv("DOCKER_HOST", dockerHost)
+	t.Setenv("DOCKER_HOST", dockerHost)
 
 	// Act
 	ret, err := GetSocketAndHost("")
@@ -43,6 +49,9 @@ func TestGetSocketAndHostNoSocket(t *testing.T) {
 }
 
 func TestGetSocketAndHostOnlySocket(t *testing.T) {
+	t.Setenv("DOCKER_HOST", os.Getenv("DOCKER_HOST"))
+	originalLocations := CommonSocketLocations
+	t.Cleanup(func() { CommonSocketLocations = originalLocations })
 	// Arrange
 	socketURI := "/path/to/my.socket"
 	os.Unsetenv("DOCKER_HOST")
@@ -60,10 +69,13 @@ func TestGetSocketAndHostOnlySocket(t *testing.T) {
 }
 
 func TestGetSocketAndHostDontMount(t *testing.T) {
+	t.Setenv("DOCKER_HOST", os.Getenv("DOCKER_HOST"))
+	originalLocations := CommonSocketLocations
+	t.Cleanup(func() { CommonSocketLocations = originalLocations })
 	// Arrange
 	CommonSocketLocations = originalCommonSocketLocations
 	dockerHost := "unix:///my/docker/host.sock"
-	os.Setenv("DOCKER_HOST", dockerHost)
+	t.Setenv("DOCKER_HOST", dockerHost)
 
 	// Act
 	ret, err := GetSocketAndHost("-")
@@ -74,6 +86,9 @@ func TestGetSocketAndHostDontMount(t *testing.T) {
 }
 
 func TestGetSocketAndHostNoHostNoSocket(t *testing.T) {
+	t.Setenv("DOCKER_HOST", os.Getenv("DOCKER_HOST"))
+	originalLocations := CommonSocketLocations
+	t.Cleanup(func() { CommonSocketLocations = originalLocations })
 	// Arrange
 	CommonSocketLocations = originalCommonSocketLocations
 	os.Unsetenv("DOCKER_HOST")
@@ -92,6 +107,9 @@ func TestGetSocketAndHostNoHostNoSocket(t *testing.T) {
 // > Your code breaks setting DOCKER_HOST if shouldMount is false.
 // > This happens if neither DOCKER_HOST nor --container-daemon-socket has a value, but socketLocation() returns a URI
 func TestGetSocketAndHostNoHostNoSocketDefaultLocation(t *testing.T) {
+	t.Setenv("DOCKER_HOST", os.Getenv("DOCKER_HOST"))
+	originalLocations := CommonSocketLocations
+	t.Cleanup(func() { CommonSocketLocations = originalLocations })
 	// Arrange
 	mySocketFile, tmpErr := os.CreateTemp("", "act-*.sock")
 	mySocket := mySocketFile.Name()
@@ -114,6 +132,9 @@ func TestGetSocketAndHostNoHostNoSocketDefaultLocation(t *testing.T) {
 }
 
 func TestGetSocketAndHostNoHostInvalidSocket(t *testing.T) {
+	t.Setenv("DOCKER_HOST", os.Getenv("DOCKER_HOST"))
+	originalLocations := CommonSocketLocations
+	t.Cleanup(func() { CommonSocketLocations = originalLocations })
 	// Arrange
 	os.Unsetenv("DOCKER_HOST")
 	mySocket := "/my/socket/path.sock"
@@ -131,6 +152,9 @@ func TestGetSocketAndHostNoHostInvalidSocket(t *testing.T) {
 }
 
 func TestGetSocketAndHostOnlySocketValidButUnusualLocation(t *testing.T) {
+	t.Setenv("DOCKER_HOST", os.Getenv("DOCKER_HOST"))
+	originalLocations := CommonSocketLocations
+	t.Cleanup(func() { CommonSocketLocations = originalLocations })
 	// Arrange
 	socketURI := "unix:///path/to/my.socket"
 	CommonSocketLocations = []string{"/unusual", "/location"}

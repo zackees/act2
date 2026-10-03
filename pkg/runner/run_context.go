@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -142,15 +143,25 @@ func getDockerDaemonSocketMountPath(daemonPath string) string {
 
 // Returns the binds and mounts for the container, resolving paths as appropriate
 func (rc *RunContext) GetBindsAndMounts() ([]string, map[string]string) {
+	ext := container.LinuxContainerEnvironmentExtensions{}
+	convert := ext.ToContainerPath
+	if rc.JobContainer != nil {
+		convert = rc.JobContainer.ToContainerPath
+	}
+	return rc.getBindsAndMounts(convert)
+}
+
+func (rc *RunContext) getBindsAndMounts(convert func(string) string) ([]string, map[string]string) {
 	name := rc.jobContainerName()
 
-	if rc.Config.ContainerDaemonSocket == "" {
-		rc.Config.ContainerDaemonSocket = "/var/run/docker.sock"
+	socket := rc.Config.ContainerDaemonSocket
+	if socket == "" {
+		socket = "/var/run/docker.sock"
 	}
 
 	binds := []string{}
-	if rc.Config.ContainerDaemonSocket != "-" {
-		daemonPath := getDockerDaemonSocketMountPath(rc.Config.ContainerDaemonSocket)
+	if socket != "-" {
+		daemonPath := getDockerDaemonSocketMountPath(socket)
 		binds = append(binds, fmt.Sprintf("%s:%s", daemonPath, "/var/run/docker.sock"))
 	}
 
@@ -161,6 +172,8 @@ func (rc *RunContext) GetBindsAndMounts() ([]string, map[string]string) {
 		// Permission issues?
 		// binds = append(binds, hostEnv.ToolCache+":/opt/hostedtoolcache")
 		binds = append(binds, hostEnv.GetActPath()+":"+ext.GetActPath())
+		// Native execution copies the checkout into its host executor path.
+		// Docker actions still expect the original Linux container destination.
 		binds = append(binds, hostEnv.ToContainerPath(rc.Config.Workdir)+":"+ext.ToContainerPath(rc.Config.Workdir))
 		return binds, mounts
 	}
@@ -192,9 +205,9 @@ func (rc *RunContext) GetBindsAndMounts() ([]string, map[string]string) {
 		if selinux.GetEnabled() {
 			bindModifiers = ":z"
 		}
-		binds = append(binds, fmt.Sprintf("%s:%s%s", rc.Config.Workdir, ext.ToContainerPath(rc.Config.Workdir), bindModifiers))
+		binds = append(binds, fmt.Sprintf("%s:%s%s", rc.Config.Workdir, convert(rc.Config.Workdir), bindModifiers))
 	} else {
-		mounts[name] = ext.ToContainerPath(rc.Config.Workdir)
+		mounts[name] = convert(rc.Config.Workdir)
 	}
 
 	return binds, mounts
@@ -277,6 +290,19 @@ func (rc *RunContext) emulatesHostedRunner(ctx context.Context) bool {
 	return rc.containerImage(ctx) == ""
 }
 
+func (rc *RunContext) jobContainerEnvironment(ctx context.Context) container.LinuxContainerEnvironmentExtensions {
+	ext := container.LinuxContainerEnvironmentExtensions{}
+	if rc.emulatesHostedRunner(ctx) {
+		name := filepath.Base(rc.Config.Workdir)
+		if name == "." || name == "/" || name == "\\" {
+			name = "workspace"
+		}
+		ext.HostWorkdir = rc.Config.Workdir
+		ext.ContainerWorkdir = path.Join(container.HostedRunnerHome, "work", name, name)
+	}
+	return ext
+}
+
 func (rc *RunContext) startJobContainer() common.Executor {
 	return func(ctx context.Context) error {
 		rc.setRunnerEnvironment(runnerEnvironmentHosted)
@@ -308,8 +334,8 @@ func (rc *RunContext) startJobContainer() common.Executor {
 		envList = append(envList, fmt.Sprintf("%s=%s", "RUNNER_TEMP", "/tmp"))
 		envList = append(envList, fmt.Sprintf("%s=%s", "LANG", "C.UTF-8")) // Use same locale as GitHub Actions
 
-		ext := container.LinuxContainerEnvironmentExtensions{}
-		binds, mounts := rc.GetBindsAndMounts()
+		ext := rc.jobContainerEnvironment(ctx)
+		binds, mounts := rc.getBindsAndMounts(ext.ToContainerPath)
 
 		// specify the network to which the container will connect when `docker create` stage. (like execute command line: docker create --network <networkName> <image>)
 		// if using service containers, will create a new network for the containers.
@@ -436,6 +462,8 @@ func (rc *RunContext) startJobContainer() common.Executor {
 			Platform:       rc.Config.ContainerArchitecture,
 			Options:        rc.options(ctx),
 			Init:           rc.emulatesHostedRunner(ctx),
+			HostedRunner:   rc.emulatesHostedRunner(ctx),
+			SourceDir:      ext.HostWorkdir,
 		})
 		if rc.JobContainer == nil {
 			return errors.New("Failed to create job container")
@@ -1178,12 +1206,13 @@ func (rc *RunContext) handleServiceCredentials(ctx context.Context, creds map[st
 
 // GetServiceBindsAndMounts returns the binds and mounts for the service container, resolving paths as appropriate
 func (rc *RunContext) GetServiceBindsAndMounts(svcVolumes []string) ([]string, map[string]string) {
-	if rc.Config.ContainerDaemonSocket == "" {
-		rc.Config.ContainerDaemonSocket = "/var/run/docker.sock"
+	socket := rc.Config.ContainerDaemonSocket
+	if socket == "" {
+		socket = "/var/run/docker.sock"
 	}
 	binds := []string{}
-	if rc.Config.ContainerDaemonSocket != "-" {
-		daemonPath := getDockerDaemonSocketMountPath(rc.Config.ContainerDaemonSocket)
+	if socket != "-" {
+		daemonPath := getDockerDaemonSocketMountPath(socket)
 		binds = append(binds, fmt.Sprintf("%s:%s", daemonPath, "/var/run/docker.sock"))
 	}
 

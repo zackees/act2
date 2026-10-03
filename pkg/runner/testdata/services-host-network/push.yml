@@ -9,6 +9,6 @@ jobs:
         ports:
           - "8080:80"
     steps:
-      - run: apt-get -qq update && apt-get -yqq install --no-install-recommends curl net-tools
+      - run: sudo apt-get -qq update && sudo apt-get -yqq install --no-install-recommends curl net-tools
       - run: netstat -tlpen
       - run: curl -v http://localhost:8080

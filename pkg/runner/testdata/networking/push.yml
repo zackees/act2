@@ -6,8 +6,8 @@ jobs:
     steps:
       - name: Install tools
         run: |
-          apt update
-          apt install -y iputils-ping
+          sudo apt update
+          sudo apt install -y iputils-ping
       - name: Run hostname test
         run: |
           hostname -f

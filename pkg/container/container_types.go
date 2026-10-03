@@ -8,14 +8,19 @@ import (
 	"github.com/nektos/act/pkg/common"
 )
 
+// HostedRunnerHome is the private home of a hosted-VM surrogate.
+const HostedRunnerHome = "/home/actrunner"
+
 // NewContainerInput the input for the New function
 type NewContainerInput struct {
-	Image          string
-	Username       string
-	Password       string
-	Entrypoint     []string
-	Cmd            []string
-	WorkingDir     string
+	Image      string
+	Username   string
+	Password   string
+	Entrypoint []string
+	Cmd        []string
+	WorkingDir string
+	// SourceDir maps the host checkout to WorkingDir; empty preserves image paths.
+	SourceDir      string
 	Env            []string
 	Binds          []string
 	Mounts         map[string]string
@@ -33,6 +38,9 @@ type NewContainerInput struct {
 	// Init runs an init process as PID 1 that reaps orphaned children, as a
 	// GitHub-hosted runner VM's init does. container.options can override it.
 	Init bool
+	// HostedRunner provisions an ordinary user for a simulated runner VM.
+	// Explicit job containers and Docker actions retain their image user.
+	HostedRunner bool
 }
 
 // FileEntry is a file to copy to a container

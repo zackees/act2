@@ -2,6 +2,7 @@ package container
 
 import (
 	"context"
+	"path"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -11,23 +12,31 @@ import (
 )
 
 type LinuxContainerEnvironmentExtensions struct {
+	HostWorkdir      string
+	ContainerWorkdir string
 }
 
 // Resolves the equivalent host path inside the container
 // This is required for windows and WSL 2 to translate things like C:\Users\Myproject to /mnt/users/Myproject
 // For use in docker volumes and binds
-func (*LinuxContainerEnvironmentExtensions) ToContainerPath(path string) string {
-	if runtime.GOOS == "windows" && strings.Contains(path, "/") {
+func (ext *LinuxContainerEnvironmentExtensions) ToContainerPath(hostPath string) string {
+	if runtime.GOOS == "windows" && strings.Contains(hostPath, "/") {
 		log.Error("You cannot specify linux style local paths (/mnt/etc) on Windows as it does not understand them.")
 		return ""
 	}
 
-	abspath, err := filepath.Abs(path)
+	abspath, err := filepath.Abs(hostPath)
 	if err != nil {
 		log.Error(err)
 		return ""
 	}
 
+	if ext.HostWorkdir != "" {
+		rel, err := filepath.Rel(ext.HostWorkdir, abspath)
+		if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return path.Join(ext.ContainerWorkdir, filepath.ToSlash(rel))
+		}
+	}
 	// Test if the path is a windows path
 	windowsPathRegex := regexp.MustCompile(`^([a-zA-Z]):\\(.+)$`)
 	windowsPathComponents := windowsPathRegex.FindStringSubmatch(abspath)

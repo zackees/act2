@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -45,6 +46,10 @@ import (
 func NewContainer(input *NewContainerInput) ExecutionsEnvironment {
 	cr := new(containerReference)
 	cr.input = input
+	if input.SourceDir != "" {
+		cr.HostWorkdir = input.SourceDir
+		cr.ContainerWorkdir = input.WorkingDir
+	}
 	return cr
 }
 
@@ -88,11 +93,12 @@ func (cr *containerReference) Start(attach bool) common.Executor {
 				cr.attach().IfBool(attach),
 				cr.start(),
 				cr.wait().IfBool(attach),
+				cr.provisionHostedRunner(),
 				cr.tryReadUID(),
 				cr.tryReadGID(),
 				func(ctx context.Context) error {
 					// If this fails, then folders have wrong permissions on non root container
-					if cr.UID != 0 || cr.GID != 0 {
+					if (cr.UID != 0 || cr.GID != 0) && cr.mayChown(cr.input.WorkingDir) {
 						_ = cr.Exec([]string{"chown", "-R", fmt.Sprintf("%d:%d", cr.UID, cr.GID), cr.input.WorkingDir}, nil, "0", "")(ctx)
 					}
 					return nil
@@ -129,7 +135,7 @@ func (cr *containerReference) CopyDir(destPath string, srcPath string, useGitIgn
 		cr.copyDir(destPath, srcPath, useGitIgnore),
 		func(ctx context.Context) error {
 			// If this fails, then folders have wrong permissions on non root container
-			if cr.UID != 0 || cr.GID != 0 {
+			if (cr.UID != 0 || cr.GID != 0) && cr.mayChown(destPath) {
 				_ = cr.Exec([]string{"chown", "-R", fmt.Sprintf("%d:%d", cr.UID, cr.GID), destPath}, nil, "0", "")(ctx)
 			}
 			return nil
@@ -207,11 +213,12 @@ func (cr *containerReference) ReplaceLogWriter(stdout io.Writer, stderr io.Write
 }
 
 type containerReference struct {
-	cli   client.APIClient
-	id    string
-	input *NewContainerInput
-	UID   int
-	GID   int
+	cli            client.APIClient
+	id             string
+	input          *NewContainerInput
+	UID            int
+	GID            int
+	protectedPaths []string
 	LinuxContainerEnvironmentExtensions
 }
 
@@ -425,6 +432,9 @@ func (cr *containerReference) create(capAdd []string, capDrop []string) common.E
 			ExposedPorts: convertPortSet(input.ExposedPorts),
 			Tty:          isTerminal,
 		}
+		if input.HostedRunner {
+			config.Env = append(config.Env, "HOME="+hostedRunnerHome, "USER="+hostedRunnerUser, "RUNNER_USER="+hostedRunnerUser)
+		}
 		logger.Debugf("Common container.Config ==> %+v", config)
 
 		if len(input.Cmd) != 0 {
@@ -533,6 +543,11 @@ func (cr *containerReference) extractFromImageEnv(env *map[string]string) common
 			return fmt.Errorf("unmarshal image env: %w", err)
 		}
 
+		if cr.input.HostedRunner {
+			imageEnv["HOME"] = hostedRunnerHome
+			imageEnv["USER"] = hostedRunnerUser
+			imageEnv["RUNNER_USER"] = hostedRunnerUser
+		}
 		for k, v := range imageEnv {
 			if k == "PATH" {
 				if envMap[k] == "" {
@@ -560,6 +575,10 @@ func (cr *containerReference) exec(cmd []string, env map[string]string, user, wo
 				newCmd = append(newCmd, strings.ReplaceAll(v, `\`, `/`))
 			}
 			cmd = newCmd
+		}
+
+		if user == "" && cr.input.HostedRunner {
+			user = hostedRunnerUser
 		}
 
 		logger.Debugf("Exec command '%s'", cmd)
@@ -626,6 +645,7 @@ func (cr *containerReference) exec(cmd []string, env map[string]string, user, wo
 func (cr *containerReference) tryReadID(opt string, cbk func(id int)) common.Executor {
 	return func(ctx context.Context) error {
 		idResp, err := cr.cli.ExecCreate(ctx, cr.id, client.ExecCreateOptions{
+			User:         cr.defaultExecUser(),
 			Cmd:          []string{"id", opt},
 			AttachStdout: true,
 			AttachStderr: true,
@@ -732,7 +752,7 @@ func (cr *containerReference) CopyTarStream(ctx context.Context, destPath string
 		return fmt.Errorf("failed to copy content to container: %w", err)
 	}
 	// If this fails, then folders have wrong permissions on non root container
-	if cr.UID != 0 || cr.GID != 0 {
+	if (cr.UID != 0 || cr.GID != 0) && cr.mayChown(destPath) {
 		_ = cr.Exec([]string{"chown", "-R", fmt.Sprintf("%d:%d", cr.UID, cr.GID), destPath}, nil, "0", "")(ctx)
 	}
 	return nil
@@ -812,6 +832,24 @@ func (cr *containerReference) copyDir(dstPath string, srcPath string, useGitIgno
 func (cr *containerReference) copyContent(dstPath string, files ...*FileEntry) common.Executor {
 	return func(ctx context.Context) error {
 		logger := common.Logger(ctx)
+		// Docker creates implicit archive parents as root. Let the configured
+		// runner create them first so custom shells can move their script.
+		if cr.input.HostedRunner && (cr.UID != 0 || cr.GID != 0) {
+			directories := []string{"mkdir", "-p", "--"}
+			seen := map[string]bool{}
+			for _, file := range files {
+				directory := path.Dir(path.Join(dstPath, file.Name))
+				if !seen[directory] {
+					directories = append(directories, directory)
+					seen[directory] = true
+				}
+			}
+			if len(directories) > 3 {
+				if err := cr.Exec(directories, nil, "", "/")(ctx); err != nil {
+					return fmt.Errorf("prepare runner file directories: %w", err)
+				}
+			}
+		}
 		var buf bytes.Buffer
 		tw := tar.NewWriter(&buf)
 		for _, file := range files {
