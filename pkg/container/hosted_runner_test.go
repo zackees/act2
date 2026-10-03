@@ -20,7 +20,7 @@ func TestHostedRunnerIdentity(t *testing.T) {
 	}
 	for _, hosted := range []bool{true, false} {
 		t.Run(fmt.Sprint(hosted), func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			defer cancel()
 			var output bytes.Buffer
 			cr := NewContainer(&NewContainerInput{
@@ -31,6 +31,7 @@ func TestHostedRunnerIdentity(t *testing.T) {
 				HostedRunner: hosted,
 				Stdout:       &output, Stderr: &output,
 			})
+			require.NoError(t, cr.Pull(false)(ctx))
 			require.NoError(t, cr.Create(nil, nil)(ctx))
 			defer func() { assert.NoError(t, cr.Close()(context.Background())) }()
 			defer func() { assert.NoError(t, cr.Remove()(context.Background())) }()
@@ -62,7 +63,7 @@ func TestHostedRunnerSeedAndBoundOwnership(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Docker hosted-runner integration")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	name := fmt.Sprintf("act2-bound-user-test-%d", time.Now().UnixNano())
 	cli, err := GetDockerClient(ctx)
@@ -78,6 +79,7 @@ func TestHostedRunnerSeedAndBoundOwnership(t *testing.T) {
 		Name:  name, Entrypoint: []string{"tail", "-f", "/dev/null"}, WorkingDir: "/workspace",
 		Binds: []string{name + ":/workspace:rw"}, Stdout: &output, Stderr: &output,
 	}).(*containerReference)
+	require.NoError(t, cr.Pull(false)(ctx))
 	require.NoError(t, cr.Create(nil, nil)(ctx))
 	defer func() { assert.NoError(t, cr.Close()(context.Background())) }()
 	defer func() { assert.NoError(t, cr.Remove()(context.Background())) }()
@@ -107,7 +109,7 @@ func TestHostedRunnerProtectsOptionMounts(t *testing.T) {
 	}()
 	for _, target := range []string{"/home", "/home/actrunner", "/opt/hostedtoolcache", "/var/run/act", "/etc/sudoers.d", "/var/mail"} {
 		t.Run(target, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			defer cancel()
 			var output bytes.Buffer
 			cr := NewContainer(&NewContainerInput{
@@ -119,6 +121,7 @@ func TestHostedRunnerProtectsOptionMounts(t *testing.T) {
 				Options:     "--mount type=bind,source=" + fixture.Volume.Mountpoint + ",target=" + target + ",readonly",
 				Stdout:      &output, Stderr: &output,
 			}).(*containerReference)
+			require.NoError(t, cr.Pull(false)(ctx))
 			require.NoError(t, cr.Create(nil, nil)(ctx))
 			defer func() { assert.NoError(t, cr.Close()(context.Background())) }()
 			defer func() { assert.NoError(t, cr.Remove()(context.Background())) }()
@@ -150,7 +153,7 @@ func TestHostedRunnerWorkspaceLayout(t *testing.T) {
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			defer cancel()
 			var output bytes.Buffer
 			cr := NewContainer(&NewContainerInput{
@@ -159,6 +162,7 @@ func TestHostedRunnerWorkspaceLayout(t *testing.T) {
 				Entrypoint: []string{"tail", "-f", "/dev/null"}, WorkingDir: test.workdir, HostedRunner: true,
 				Stdout: &output, Stderr: &output,
 			})
+			require.NoError(t, cr.Pull(false)(ctx))
 			require.NoError(t, cr.Create(nil, nil)(ctx))
 			defer func() { assert.NoError(t, cr.Close()(context.Background())) }()
 			defer func() { assert.NoError(t, cr.Remove()(context.Background())) }()
