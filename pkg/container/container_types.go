@@ -41,6 +41,8 @@ type NewContainerInput struct {
 	// HostedRunner provisions an ordinary user for a simulated runner VM.
 	// Explicit job containers and Docker actions retain their image user.
 	HostedRunner bool
+	// RunnerUmask sets the hosted runner mask; custom containers retain Docker semantics.
+	RunnerUmask bool
 }
 
 // FileEntry is a file to copy to a container

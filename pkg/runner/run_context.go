@@ -463,6 +463,7 @@ func (rc *RunContext) startJobContainer() common.Executor {
 			Options:        rc.options(ctx),
 			Init:           rc.emulatesHostedRunner(ctx),
 			HostedRunner:   rc.emulatesHostedRunner(ctx),
+			RunnerUmask:    rc.emulatesHostedRunner(ctx),
 			SourceDir:      ext.HostWorkdir,
 		})
 		if rc.JobContainer == nil {
