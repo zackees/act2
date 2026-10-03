@@ -3,9 +3,11 @@ package container
 import (
 	"archive/tar"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -73,11 +75,18 @@ type ownedArchiveExtractor struct {
 	links       []archiveLink
 	directories []archiveDirectory
 	seen        map[string]bool
+	original    *os.Root
+	ctx         context.Context
 }
 
 func extractOwnedArchive(ctx context.Context, root, original string, archive io.Reader) error {
+	originalRoot, err := os.OpenRoot(original)
+	if err != nil {
+		return err
+	}
+	defer originalRoot.Close()
 	reader := tar.NewReader(archive)
-	extractor := ownedArchiveExtractor{root: root, seen: map[string]bool{}}
+	extractor := ownedArchiveExtractor{root: root, original: originalRoot, ctx: ctx, seen: map[string]bool{}}
 	var bytes int64
 	for entries := 0; ; entries++ {
 		if err := ctx.Err(); err != nil {
@@ -126,7 +135,11 @@ func (e *ownedArchiveExtractor) finish(root, original string) error {
 		if err := os.Chmod(e.directories[i].name, e.directories[i].mode); err != nil {
 			return err
 		}
-		if err := restoreOwnedTime(e.directories[i].name, e.directories[i].modified); err != nil {
+		modified, err := e.unchangedTime(e.directories[i].name, e.directories[i].modified, true)
+		if err != nil {
+			return err
+		}
+		if err := restoreOwnedTime(e.directories[i].name, modified); err != nil {
 			return err
 		}
 	}
@@ -181,7 +194,11 @@ func (e *ownedArchiveExtractor) entry(header *tar.Header, reader io.Reader) erro
 		if err := extractOwnedFile(destination, mode, reader); err != nil {
 			return err
 		}
-		return restoreOwnedTime(destination, header.ModTime)
+		modified, err := e.unchangedTime(destination, header.ModTime, false)
+		if err != nil {
+			return err
+		}
+		return restoreOwnedTime(destination, modified)
 	case tar.TypeSymlink:
 		if !safeArchiveSymlink(name, header.Linkname) {
 			return fmt.Errorf("Docker action symlink escapes workspace: %q", name)
@@ -197,6 +214,77 @@ func (e *ownedArchiveExtractor) entry(header *tar.Header, reader io.Reader) erro
 		return fmt.Errorf("unsupported Docker action archive entry: %q", name)
 	}
 	return nil
+}
+
+// Docker's archive endpoint drops subsecond timestamps. Only unchanged content
+// and matching coarse metadata justify retaining the original exact timestamp.
+func (e *ownedArchiveExtractor) unchangedTime(destination string, modified time.Time, directory bool) (time.Time, error) {
+	if modified.Nanosecond() != 0 {
+		return modified, nil
+	}
+	name, err := filepath.Rel(e.root, destination)
+	if err != nil {
+		return modified, err
+	}
+	original, err := e.original.Lstat(name)
+	if err != nil || original.ModTime().Unix() != modified.Unix() || original.ModTime().Nanosecond() == 0 {
+		return modified, nil
+	}
+	current, err := os.Lstat(destination)
+	if err != nil {
+		return modified, err
+	}
+	if current.Mode() != original.Mode() || current.Size() != original.Size() && !directory {
+		return modified, nil
+	}
+	var same bool
+	if directory {
+		same, err = sameOwnedDirectory(e.ctx, e.original, name, destination)
+	} else {
+		same, err = sameOwnedFile(e.ctx, e.original, name, destination)
+	}
+	if same && err == nil {
+		return original.ModTime(), nil
+	}
+	return modified, err
+}
+
+func sameOwnedDirectory(ctx context.Context, original *os.Root, name, destination string) (bool, error) {
+	before, err := fs.ReadDir(original.FS(), filepath.ToSlash(name))
+	if err != nil {
+		return false, err
+	}
+	after, err := os.ReadDir(destination)
+	if err != nil || len(before) != len(after) {
+		return false, err
+	}
+	for i, entry := range before {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		if entry.Name() != after[i].Name() || entry.Type() != after[i].Type() {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+func sameOwnedFile(ctx context.Context, original *os.Root, name, destination string) (bool, error) {
+	before, err := original.Open(name)
+	if err != nil {
+		return false, err
+	}
+	defer before.Close()
+	after, err := os.Open(destination)
+	if err != nil {
+		return false, err
+	}
+	defer after.Close()
+	beforeHash, afterHash := sha256.New(), sha256.New()
+	_, beforeErr := io.Copy(&ownedArchiveWriter{ctx: ctx, writer: beforeHash, remaining: ownedArchiveByteLimit}, before)
+	_, afterErr := io.Copy(&ownedArchiveWriter{ctx: ctx, writer: afterHash, remaining: ownedArchiveByteLimit}, after)
+	err = errors.Join(beforeErr, afterErr)
+	return string(beforeHash.Sum(nil)) == string(afterHash.Sum(nil)), err
 }
 
 func restoreOwnedTime(destination string, modified time.Time) error {
