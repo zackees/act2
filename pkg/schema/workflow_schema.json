@@ -1643,6 +1643,10 @@
           "cancel-in-progress": {
             "type": "boolean",
             "description": "To cancel any currently running job or workflow in the same concurrency group, specify cancel-in-progress: true."
+          },
+          "queue": {
+            "type": "non-empty-string",
+            "description": "How many runs may wait in the concurrency group (for example `max`). act runs jobs without concurrency queuing, so it accepts and ignores this."
           }
         }
       }

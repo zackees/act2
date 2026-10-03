@@ -90,3 +90,32 @@ jobs:
 	}).UnmarshalYAML(&node)
 	assert.NoError(t, err)
 }
+
+// GitHub's `concurrency.queue` (e.g. `queue: max`) is valid at workflow and job
+// level; a stock workflow using it must not be rejected before any job runs.
+func TestConcurrencyQueue(t *testing.T) {
+	var node yaml.Node
+	err := yaml.Unmarshal([]byte(`
+on: push
+concurrency:
+  group: pages
+  cancel-in-progress: false
+  queue: max
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: build-${{ github.ref }}
+      queue: max
+    steps:
+    - run: exit 0
+`), &node)
+	if !assert.NoError(t, err) {
+		return
+	}
+	err = (&Node{
+		Definition: "workflow-root-strict",
+		Schema:     GetWorkflowSchema(),
+	}).UnmarshalYAML(&node)
+	assert.NoError(t, err)
+}
