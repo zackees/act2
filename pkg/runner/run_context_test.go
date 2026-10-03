@@ -338,6 +338,21 @@ func TestRunContext_GetBindsAndMounts(t *testing.T) {
 	})
 }
 
+func TestRunContext_SocketMountsPreserveSharedConfig(t *testing.T) {
+	config := &Config{}
+	rc := &RunContext{
+		Name:   "socket-test",
+		Config: config,
+		Run:    &model.Run{Workflow: &model.Workflow{Name: "socket-test"}},
+	}
+	binds, _ := rc.GetBindsAndMounts()
+	assert.Contains(t, binds, "/var/run/docker.sock:/var/run/docker.sock")
+	assert.Empty(t, config.ContainerDaemonSocket, "matrix jobs share the configuration")
+	binds, _ = rc.GetServiceBindsAndMounts(nil)
+	assert.Contains(t, binds, "/var/run/docker.sock:/var/run/docker.sock")
+	assert.Empty(t, config.ContainerDaemonSocket, "services must not mutate the shared socket setting")
+}
+
 func TestGetGitHubContext(t *testing.T) {
 	log.SetLevel(log.DebugLevel)
 
