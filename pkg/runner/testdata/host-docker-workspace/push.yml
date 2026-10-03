@@ -1,0 +1,35 @@
+name: host Docker workspace
+on: push
+jobs:
+  workspace:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          printf original > changed
+          printf deleted > deleted
+          python3 -c 'import os; open("unchanged", "w").write("original"); os.mkdir("empty-directory"); [os.utime(p, ns=(1720000000123456789, 1720000000123456789)) for p in ("unchanged", "empty-directory")]'
+      - id: action
+        uses: fixture/bridge@v1
+      - run: |
+          test "${{ steps.action.outputs.result }}" = copied
+          test "$BRIDGE_ENV" = copied
+          test "$(cat changed)" = changed
+          test ! -e deleted
+          test -x added
+          test "$(readlink linked)" = added
+          bridge-command
+          test -f pre
+          python3 -c 'import os; assert all(os.stat(p).st_mtime_ns == 1720000000123456789 for p in ("unchanged", "empty-directory"))'
+          printf following > following
+      - id: failed
+        continue-on-error: true
+        uses: docker://busybox:1.37
+        with:
+          entrypoint: sh
+          args: -c 'printf failed > failed-file; printf "failure=copied\n" >> "$GITHUB_OUTPUT"; exit 1'
+      - run: |
+          test "${{ steps.failed.outputs.failure }}" = copied
+          test "${{ steps.failed.outcome }}" = failure
+          test "$(cat failed-file)" = failed
+          python3 -c 'import os; assert all(os.stat(p).st_mtime_ns == 1720000000123456789 for p in ("unchanged", "empty-directory"))'

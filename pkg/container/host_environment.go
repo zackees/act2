@@ -31,6 +31,8 @@ type HostEnvironment struct {
 	ToolCache string
 	Workdir   string
 	ActPath   string
+	// OwnedRoot bounds reconciliation of Docker-action changes to private runner state.
+	OwnedRoot string
 	CleanUp   func()
 	StdOut    io.Writer
 }

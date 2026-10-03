@@ -73,3 +73,7 @@ func (cm *containerMock) GetContainerArchive(ctx context.Context, srcPath string
 	}
 	return args.Get(0).(io.ReadCloser), err
 }
+
+func (cm *containerMock) CopyTarStream(ctx context.Context, destination string, archive io.Reader) error {
+	return cm.Called(ctx, destination, archive).Error(0)
+}

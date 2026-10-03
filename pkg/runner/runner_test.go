@@ -624,6 +624,19 @@ func TestRunEventHostEnvironment(t *testing.T) {
 	}
 }
 
+func TestRunEventHostDockerWorkspace(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test")
+	}
+	table := TestJobFileInfo{workdir, "host-docker-workspace", "push", "", map[string]string{"ubuntu-latest": "-self-hosted"}, secrets}
+	cache := &LocalRepositoryCache{
+		Parent:            GoGitActionCache{Path: t.TempDir()},
+		LocalRepositories: map[string]string{"fixture/bridge@v1": filepath.Join(workdir, "host-docker-workspace", "action")},
+		CacheDirCache:     map[string]string{},
+	}
+	table.runTest(context.Background(), t, &Config{ActionCache: cache})
+}
+
 func TestDryrunEvent(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test")
