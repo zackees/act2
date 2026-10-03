@@ -8,6 +8,14 @@ if ! id actrunner >/dev/null 2>&1; then
   useradd --no-log-init --non-unique --uid "$uid" --create-home --home-dir /home/actrunner --shell /bin/bash actrunner
 fi
 [ "$(id -u actrunner)" -ne 0 ] || { echo "Hosted runner user must be non-root" >&2; exit 1; }
+# Hosted runners can use their daemon; preserve the mounted socket's metadata.
+if [ -S /var/run/docker.sock ]; then
+  gid=$(stat -c %g /var/run/docker.sock)
+  if ! getent group "$gid" >/dev/null; then
+    groupadd --gid "$gid" "actdocker$gid"
+  fi
+  usermod --append --groups "$gid" actrunner
+fi
 mkdir -p /home/actrunner /opt/hostedtoolcache /var/run/act
 chown actrunner:$(id -gn actrunner) /home/actrunner
 if [ -n "$4" ]; then

@@ -29,6 +29,7 @@ func TestHostedRunnerIdentity(t *testing.T) {
 				Entrypoint:   []string{"tail", "-f", "/dev/null"},
 				WorkingDir:   "/tmp/workspace",
 				HostedRunner: hosted,
+				Binds:        []string{"/var/run/docker.sock:/var/run/docker.sock"},
 				Stdout:       &output, Stderr: &output,
 			})
 			require.NoError(t, cr.Pull(false)(ctx))
@@ -39,6 +40,7 @@ func TestHostedRunnerIdentity(t *testing.T) {
 			env := map[string]string{}
 			require.NoError(t, cr.UpdateFromImageEnv(&env)(ctx))
 			if hosted {
+				require.NoError(t, cr.Exec([]string{"docker", "--host", "unix:///var/run/docker.sock", "info", "--format", "{{.ServerVersion}}"}, env, "", "")(ctx), output.String())
 				require.NoError(t, cr.Exec([]string{"bash", "-ec", `test "$(id -u)" -ne 0; test "$HOME" = /home/actrunner; touch "$HOME/writable" /tmp/workspace/writable /opt/hostedtoolcache/writable; d=$(mktemp -d); chmod 500 "$d"; if touch "$d/denied"; then exit 1; fi; sudo -n true; node -e 'if(process.getuid()===0)process.exit(1)'`}, env, "", "")(ctx), output.String())
 				require.NoError(t, cr.Exec([]string{"id", "-u"}, nil, "0", "")(ctx))
 				assert.Contains(t, output.String(), "Permission denied")
@@ -77,19 +79,19 @@ func TestHostedRunnerSeedAndBoundOwnership(t *testing.T) {
 	cr := NewContainer(&NewContainerInput{
 		Image: "docker.io/catthehacker/ubuntu@sha256:4f2d5083a9d10d018c1c511eb8665cd480553c11975e78fd903a46daa830768b",
 		Name:  name, Entrypoint: []string{"tail", "-f", "/dev/null"}, WorkingDir: "/workspace",
-		Binds: []string{name + ":/workspace:rw"}, Stdout: &output, Stderr: &output,
+		Binds: []string{name + ":/workspace:rw", "/var/run/docker.sock:/var/run/docker.sock"}, Stdout: &output, Stderr: &output,
 	}).(*containerReference)
 	require.NoError(t, cr.Pull(false)(ctx))
 	require.NoError(t, cr.Create(nil, nil)(ctx))
 	defer func() { assert.NoError(t, cr.Close()(context.Background())) }()
 	defer func() { assert.NoError(t, cr.Remove()(context.Background())) }()
 	require.NoError(t, cr.Start(false)(ctx))
-	require.NoError(t, cr.Exec([]string{"sh", "-ec", `echo retained > /workspace/keep; chown -R 1000:1000 /workspace; mkdir -p /opt/hostedtoolcache/seed; echo complete > /opt/hostedtoolcache/seed/marker; chmod 755 /opt/hostedtoolcache/seed; chmod 644 /opt/hostedtoolcache/seed/marker`}, nil, "0", "")(ctx))
+	require.NoError(t, cr.Exec([]string{"sh", "-ec", `echo retained > /workspace/keep; stat -c '%u:%g:%a' /var/run/docker.sock > /workspace/socket-metadata; chown -R 1000:1000 /workspace; mkdir -p /opt/hostedtoolcache/seed; echo complete > /opt/hostedtoolcache/seed/marker; chmod 755 /opt/hostedtoolcache/seed; chmod 644 /opt/hostedtoolcache/seed/marker`}, nil, "0", "")(ctx))
 	cr.input.HostedRunner = true
 	require.NoError(t, cr.provisionHostedRunner()(ctx), output.String())
 	env := map[string]string{}
 	require.NoError(t, cr.UpdateFromImageEnv(&env)(ctx))
-	require.NoError(t, cr.Exec([]string{"bash", "-ec", `test "$(id -u)" -eq 1000; test "$(stat -c '%u:%g' /workspace/keep)" = 1000:1000; test "$(cat /workspace/keep)" = retained; touch /workspace/new; test "$(cat /opt/hostedtoolcache/seed/marker)" = complete; touch /opt/hostedtoolcache/seed/new; sudo -n true`}, env, "", "")(ctx), output.String())
+	require.NoError(t, cr.Exec([]string{"bash", "-ec", `test "$(id -u)" -eq 1000; test "$(stat -c '%u:%g' /workspace/keep)" = 1000:1000; test "$(cat /workspace/keep)" = retained; touch /workspace/new; test "$(cat /opt/hostedtoolcache/seed/marker)" = complete; touch /opt/hostedtoolcache/seed/new; sudo -n true; test "$(stat -c '%u:%g:%a' /var/run/docker.sock)" = "$(cat /workspace/socket-metadata)"; docker --host unix:///var/run/docker.sock info --format '{{.ServerVersion}}'`}, env, "", "")(ctx), output.String())
 }
 
 func TestHostedRunnerProtectsOptionMounts(t *testing.T) {
