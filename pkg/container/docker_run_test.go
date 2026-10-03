@@ -183,7 +183,7 @@ func TestDockerExecSetsRunnerUmaskWithoutReinterpretingArguments(t *testing.T) {
 	cli := &mockDockerClient{}
 	command := []string{"printf", "%s", "literal ; $HOME"}
 	cli.On("ExecCreate", ctx, "123", mock.MatchedBy(func(opts client.ExecCreateOptions) bool {
-		return assert.Equal(t, []string{"/bin/sh", "-c", `umask 0022; exec "$@"`, "act2-exec", "printf", "%s", "literal ; $HOME"}, opts.Cmd) &&
+		return assert.Equal(t, []string{"/bin/bash", "--noprofile", "--norc", "-p", "-c", `umask 0022; exec "$@"`, "act2-exec", "printf", "%s", "literal ; $HOME"}, opts.Cmd) &&
 			assert.Equal(t, "user", opts.User) && assert.Equal(t, "/work", opts.WorkingDir)
 	})).Return(client.ExecCreateResult{ID: "id"}, nil)
 	cli.On("ExecAttach", ctx, "id", mock.Anything).Return(client.ExecAttachResult{
@@ -213,6 +213,22 @@ func TestDockerExecRunnerUmaskLive(t *testing.T) {
 	var output bytes.Buffer
 	cr := &containerReference{id: name, cli: cli, input: &NewContainerInput{WorkingDir: "/tmp", Stdout: &output, Stderr: &output, RunnerUmask: true}}
 	command := []string{"/bin/sh", "-c", `printf 'mask=%s\narg=%s\npwd=%s\n' "$(umask)" "$1" "$PWD"; exit 42`, "probe", "literal ; $HOME"}
+	// Measure Docker directly: its native mask differs between daemon versions.
+	raw, err := cli.ExecCreate(ctx, name, client.ExecCreateOptions{
+		Cmd: command, WorkingDir: "/tmp", AttachStdout: true, AttachStderr: true,
+	})
+	if !assert.NoError(t, err) {
+		return
+	}
+	attached, err := cli.ExecAttach(ctx, raw.ID, client.ExecAttachOptions{})
+	if !assert.NoError(t, err) {
+		return
+	}
+	assert.NoError(t, cr.waitForCommand(ctx, false, attached.HijackedResponse))
+	attached.Close()
+	nativeOutput := output.String()
+	assert.Contains(t, nativeOutput, "arg=literal ; $HOME\npwd=/tmp\n")
+	output.Reset()
 	err = cr.exec(command, nil, "", "")(ctx)
 	assert.EqualError(t, err, "exitcode '42': failure")
 	assert.Equal(t, "mask=0022\narg=literal ; $HOME\npwd=/tmp\n", output.String())
@@ -222,7 +238,18 @@ func TestDockerExecRunnerUmaskLive(t *testing.T) {
 	cr.input.RunnerUmask = false
 	err = cr.exec(command, nil, "", "")(ctx)
 	assert.EqualError(t, err, "exitcode '42': failure")
-	assert.Equal(t, "mask=0000\narg=literal ; $HOME\npwd=/tmp\n", output.String())
+	assert.Equal(t, nativeOutput, output.String())
+
+	// Action inputs legitimately use hyphens in environment variable names.
+	output.Reset()
+	cr.input.RunnerUmask = true
+	err = cr.exec([]string{"/usr/bin/printenv", "INPUT_WHO-TO-GREET", "PATH"}, map[string]string{
+		"INPUT_WHO-TO-GREET": "literal ; $HOME",
+		"BASH_ENV":           "/etc/profile",
+		"PATH":               "/act2-regression-sentinel",
+	}, "", "")(ctx)
+	assert.NoError(t, err)
+	assert.Equal(t, "literal ; $HOME\n/act2-regression-sentinel\n", output.String())
 }
 
 func TestDockerCopyTarStream(t *testing.T) {

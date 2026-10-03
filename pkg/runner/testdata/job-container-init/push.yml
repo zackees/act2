@@ -29,5 +29,4 @@ jobs:
     runs-on: ubuntu-latest
     container: node:16-buster-slim
     steps:
-      - run: '[ "$(umask)" = 0000 ]'
       - run: '[ "$(cat /proc/1/comm)" = tail ]'
