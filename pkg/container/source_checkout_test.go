@@ -65,13 +65,13 @@ func TestActualCopyDirNeverAdmitsNestedOrUnownedReceiver(t *testing.T) {
 			if scenario == "unowned" {
 				environment.OwnedRoot = ""
 			}
-			require.NoError(t, environment.CopyDir(destination, requested, scenario == "git-ignore-profile")(context.Background()))
+			require.NoError(t, environment.CopyDir(destination, requested+string(filepath.Separator)+".", scenario == "git-ignore-profile")(context.Background()))
 			assert.Zero(t, receiver.calls)
 			assert.FileExists(t, filepath.Join(destination, "source.rs"))
 			if scenario == "git-ignore-profile" {
 				// The unsupported initial profile still consumes admission. Later
 				// copies must never replace an already active cold workspace.
-				require.NoError(t, environment.CopyDir(destination, requested, false)(context.Background()))
+				require.NoError(t, environment.CopyDir(destination, requested+string(filepath.Separator)+".", false)(context.Background()))
 				assert.Zero(t, receiver.calls)
 			}
 		})
