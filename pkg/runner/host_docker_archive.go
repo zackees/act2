@@ -13,17 +13,19 @@ import (
 // budget is an error, never EOF; only two end blocks followed by bounded zero
 // padding and underlying EOF prove the complete archive was received.
 type hostArchiveReader struct {
-	source     io.Reader
-	limits     hostArchiveLimits
-	consumed   int64
-	metadata   int64
-	headers    int
-	block      [512]byte
-	pending    []byte
-	body       int64
-	headerSize int64
-	zeros      int
-	ended      bool
+	source           io.Reader
+	limits           hostArchiveLimits
+	consumed         int64
+	metadata         int64
+	headers          int
+	block            [512]byte
+	pending          []byte
+	body             int64
+	metadataType     byte
+	paxName, gnuName string
+	headerSize       int64
+	zeros            int
+	ended            bool
 }
 
 func (reader *hostArchiveReader) readSource(data []byte) (int, error) {
@@ -51,6 +53,19 @@ func (reader *hostArchiveReader) Read(data []byte) (int, error) {
 		count := copy(data, reader.pending)
 		reader.pending = reader.pending[count:]
 		return count, nil
+	}
+	if reader.body > 0 && reader.metadataType != 0 {
+		payload := make([]byte, reader.body)
+		if _, err := io.ReadFull(hostArchiveSource{reader}, payload); err != nil {
+			return 0, err
+		}
+		if err := reader.inspectMetadata(payload[:reader.headerSize]); err != nil {
+			return 0, err
+		}
+		reader.pending = payload
+		reader.body = 0
+		reader.metadataType = 0
+		return reader.Read(data)
 	}
 	if reader.body > 0 {
 		if int64(len(data)) > reader.body {
@@ -101,13 +116,38 @@ func (reader *hostArchiveReader) validateBlock() error {
 		return errors.New("Docker archive raw byte limit exceeded")
 	}
 	switch reader.block[156] {
- case tar.TypeReg, tar.TypeRegA, tar.TypeXHeader, tar.TypeXGlobalHeader, tar.TypeGNULongName, tar.TypeGNULongLink:
- case tar.TypeDir, tar.TypeSymlink, tar.TypeLink, tar.TypeChar, tar.TypeBlock, tar.TypeFifo:
-  if size != 0 { return errors.New("bodyless Docker archive entry has nonzero size") }
- default:
-  return errors.New("unsupported or sparse Docker archive entry")
- }
- reader.headerSize = size
+	case tar.TypeReg, 0, tar.TypeXHeader, tar.TypeXGlobalHeader, tar.TypeGNULongName, tar.TypeGNULongLink:
+	case tar.TypeDir, tar.TypeSymlink, tar.TypeLink, tar.TypeChar, tar.TypeBlock, tar.TypeFifo:
+		if size != 0 {
+			return errors.New("bodyless Docker archive entry has nonzero size")
+		}
+	default:
+		return errors.New("unsupported or sparse Docker archive entry")
+	}
+	kind := reader.block[156]
+	if err := reader.validateLegacyDirectory(kind, size); err != nil {
+		return err
+	}
+
+	switch kind {
+	case tar.TypeXHeader:
+		reader.metadataType = kind
+		reader.paxName = ""
+	case tar.TypeXGlobalHeader:
+		reader.metadataType = kind
+		reader.paxName = ""
+		reader.gnuName = ""
+	case tar.TypeGNULongName:
+		reader.metadataType = kind
+		reader.gnuName = ""
+	case tar.TypeGNULongLink:
+		reader.metadataType = kind
+	default:
+		reader.metadataType = 0
+		reader.paxName = ""
+		reader.gnuName = ""
+	}
+	reader.headerSize = size
 	reader.body = (size + 511) / 512 * 512
 	switch reader.block[156] {
 	case tar.TypeXHeader, tar.TypeXGlobalHeader, tar.TypeGNULongName, tar.TypeGNULongLink:
@@ -160,4 +200,69 @@ func (reader *hostArchiveReader) finish() error {
 			return err
 		}
 	}
+}
+
+// Inspect bounded PAX keys before archive/tar can allocate a sparse map.
+type archivePAXMetadata struct{ name string }
+
+func validatePAXBody(body []byte) (archivePAXMetadata, error) {
+	var metadata archivePAXMetadata
+	for len(body) > 0 {
+		separator := bytes.IndexByte(body, ' ')
+		if separator <= 0 {
+			return archivePAXMetadata{}, errors.New("invalid PAX record length")
+		}
+		length, err := strconv.Atoi(string(body[:separator]))
+		if err != nil || length <= separator+1 || length > len(body) || body[length-1] != '\n' {
+			return archivePAXMetadata{}, errors.New("invalid PAX record framing")
+		}
+		key, value, ok := strings.Cut(string(body[separator+1:length-1]), "=")
+		if !ok {
+			return archivePAXMetadata{}, errors.New("invalid PAX record key")
+		}
+		if strings.HasPrefix(key, "GNU.sparse.") {
+			return archivePAXMetadata{}, errors.New("unsupported sparse Docker archive metadata")
+		}
+		if key == "path" && value != "" {
+			metadata.name = value
+		}
+		body = body[length:]
+	}
+	return metadata, nil
+}
+
+func (reader *hostArchiveReader) inspectMetadata(body []byte) error {
+	switch reader.metadataType {
+	case tar.TypeXHeader, tar.TypeXGlobalHeader:
+		metadata, err := validatePAXBody(body)
+		if err != nil {
+			return err
+		}
+		if reader.metadataType == tar.TypeXHeader {
+			reader.paxName = metadata.name
+		}
+	case tar.TypeGNULongName:
+		name, _, _ := strings.Cut(string(body), "\x00")
+		reader.gnuName = name
+	}
+	return nil
+}
+
+func (reader *hostArchiveReader) validateLegacyDirectory(kind byte, size int64) error {
+	if kind != 0 || size == 0 {
+		return nil
+	}
+	{
+		name := strings.TrimRight(string(reader.block[:100]), "\x00")
+		if reader.paxName != "" {
+			name = reader.paxName
+		}
+		if reader.gnuName != "" {
+			name = reader.gnuName
+		}
+		if strings.HasSuffix(name, "/") {
+			return errors.New("bodyless legacy archive directory has nonzero size")
+		}
+	}
+	return nil
 }
