@@ -349,7 +349,7 @@ func execAsDocker(ctx context.Context, step actionStep, actionName, basedir, sub
 		stepContainer.Pull(forcePull),
 		stepContainer.Remove().IfBool(!rc.Config.ReuseContainers),
 		stepContainer.Create(rc.Config.ContainerCapAdd, rc.Config.ContainerCapDrop),
-		stepContainer.Start(true),
+		rc.startDockerAction(stepContainer),
 	).Finally(
 		stepContainer.Remove().IfBool(!rc.Config.ReuseContainers),
 	).Finally(stepContainer.Close())(ctx)
@@ -412,19 +412,19 @@ func newStepContainer(ctx context.Context, step step, image string, cmd []string
 	if rc.IsHostEnv(ctx) {
 		networkMode = "default"
 		ext := container.LinuxContainerEnvironmentExtensions{}
-		workdir = ext.ToContainerPath(rc.Config.Workdir)
+		workdir = ext.ToContainerPath(rc.JobContainer.ToContainerPath(rc.Config.Workdir))
 	} else {
 		workdir = rc.JobContainer.ToContainerPath(rc.Config.Workdir)
 	}
 	stepContainer := container.NewContainer(&container.NewContainerInput{
-		Cmd:         cmd,
-		Entrypoint:  entrypoint,
+		Cmd:         rc.dockerActionStrings(cmd),
+		Entrypoint:  rc.dockerActionStrings(entrypoint),
 		WorkingDir:  workdir,
 		Image:       image,
 		Username:    rc.Config.Secrets["DOCKER_USERNAME"],
 		Password:    rc.Config.Secrets["DOCKER_PASSWORD"],
 		Name:        createContainerName(rc.jobContainerName(), stepModel.ID),
-		Env:         envList,
+		Env:         rc.dockerActionStrings(envList),
 		Mounts:      mounts,
 		NetworkMode: networkMode,
 		Binds:       binds,
@@ -670,6 +670,7 @@ func runPostStep(step actionStep) common.Executor {
 				actionDir = ""
 				actionPath = containerActionDir
 			}
+			populateEnvsFromSavedState(step.getEnv(), step, rc)
 			return execAsDocker(ctx, step, actionName, actionDir, actionPath, remoteAction == nil, "post-entrypoint")
 
 		case x.IsComposite():

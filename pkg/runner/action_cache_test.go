@@ -6,13 +6,17 @@ import (
 	"context"
 	"io"
 	"os"
+	"runtime"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
 
 //nolint:gosec
 func TestActionCache(t *testing.T) {
+	before := archiveProducerGoroutines()
 	a := assert.New(t)
 	cache := &GoGitActionCache{
 		Path: os.TempDir(),
@@ -61,6 +65,7 @@ func TestActionCache(t *testing.T) {
 			if !a.NoError(err) || !a.NotEmpty(atar) {
 				return
 			}
+			defer atar.Close()
 			mytar := tar.NewReader(atar)
 			th, err := mytar.Next()
 			if !a.NoError(err) || !a.NotEqual(0, th.Size) {
@@ -74,6 +79,15 @@ func TestActionCache(t *testing.T) {
 			a.NotEmpty(str)
 		})
 	}
+	a.Eventually(func() bool {
+		return archiveProducerGoroutines() == before
+	}, time.Second, time.Millisecond, "archive producers and cancellation waiters must terminate after each case")
+}
+
+func archiveProducerGoroutines() int {
+	stack := make([]byte, 512<<10)
+	n := runtime.Stack(stack, true)
+	return strings.Count(string(stack[:n]), "GoGitActionCache.GetTarArchive.func")
 }
 
 func TestActionCacheFailures(t *testing.T) {

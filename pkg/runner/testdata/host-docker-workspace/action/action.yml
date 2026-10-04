@@ -1,0 +1,8 @@
+name: workspace bridge
+description: Verify host Docker action transfers
+runs:
+  using: docker
+  image: Dockerfile
+  pre-entrypoint: /pre.sh
+  entrypoint: /main.sh
+  post-entrypoint: /post.sh

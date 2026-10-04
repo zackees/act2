@@ -167,14 +167,10 @@ func (rc *RunContext) getBindsAndMounts(convert func(string) string) ([]string, 
 
 	ext := container.LinuxContainerEnvironmentExtensions{}
 
-	if hostEnv, ok := rc.JobContainer.(*container.HostEnvironment); ok {
+	if _, ok := rc.JobContainer.(*container.HostEnvironment); ok {
 		mounts := map[string]string{}
-		// Permission issues?
-		// binds = append(binds, hostEnv.ToolCache+":/opt/hostedtoolcache")
-		binds = append(binds, hostEnv.GetActPath()+":"+ext.GetActPath())
-		// Native execution copies the checkout into its host executor path.
-		// Docker actions still expect the original Linux container destination.
-		binds = append(binds, hostEnv.ToContainerPath(rc.Config.Workdir)+":"+ext.ToContainerPath(rc.Config.Workdir))
+		// Private host-executor paths need not exist in the Docker daemon's namespace.
+		// Docker actions transfer their owned workspace through the Docker API.
 		return binds, mounts
 	}
 	mounts := map[string]string{
@@ -248,6 +244,7 @@ func (rc *RunContext) startHostEnvironment() common.Executor {
 			ToolCache: toolCache,
 			Workdir:   rc.Config.Workdir,
 			ActPath:   actPath,
+			OwnedRoot: miscpath,
 			CleanUp: func() {
 				os.RemoveAll(miscpath)
 			},
@@ -463,6 +460,7 @@ func (rc *RunContext) startJobContainer() common.Executor {
 			Options:        rc.options(ctx),
 			Init:           rc.emulatesHostedRunner(ctx),
 			HostedRunner:   rc.emulatesHostedRunner(ctx),
+			RunnerUmask:    rc.emulatesHostedRunner(ctx),
 			SourceDir:      ext.HostWorkdir,
 		})
 		if rc.JobContainer == nil {
