@@ -3,9 +3,11 @@ package runner
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"runtime"
+	"sync"
 
 	docker_container "github.com/moby/moby/api/types/container"
 	"github.com/nektos/act/pkg/common"
@@ -88,6 +90,27 @@ type runnerImpl struct {
 	caller    *caller // the job calling this runner (caller of a reusable workflow)
 }
 
+type cleanupFailuresKey struct{}
+
+// Shared by nested reusable workflows so cleanup faults reach the outermost
+// run without changing a completed job's functional result.
+type cleanupFailures struct {
+	mu   sync.Mutex
+	errs []error
+}
+
+func (f *cleanupFailures) add(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.errs = append(f.errs, err)
+}
+
+func (f *cleanupFailures) joined() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return errors.Join(f.errs...)
+}
+
 // New Creates a new Runner
 func New(runnerConfig *Config) (Runner, error) {
 	runner := &runnerImpl{
@@ -121,6 +144,10 @@ func (runner *runnerImpl) configure() (Runner, error) {
 
 // NewPlanExecutor ...
 func (runner *runnerImpl) NewPlanExecutor(plan *model.Plan) common.Executor {
+	return runner.newPlanExecutor(plan, (*RunContext).Executor)
+}
+
+func (runner *runnerImpl) newPlanExecutor(plan *model.Plan, jobExecutor func(*RunContext) (common.Executor, error)) common.Executor {
 	maxJobNameLen := 0
 
 	stagePipeline := make([]common.Executor, 0)
@@ -198,14 +225,7 @@ func (runner *runnerImpl) NewPlanExecutor(plan *model.Plan) common.Executor {
 						maxJobNameLen = len(rc.String())
 					}
 					stageExecutor = append(stageExecutor, func(ctx context.Context) error {
-						jobName := fmt.Sprintf("%-*s", maxJobNameLen, rc.String())
-						executor, err := rc.Executor()
-
-						if err != nil {
-							return err
-						}
-
-						return executor(common.WithJobErrorContainer(WithJobLogger(ctx, rc.Run.JobID, jobName, rc.Config, &rc.Masks, matrix)))
+						return runPlannedJob(ctx, rc, matrix, maxJobNameLen, jobExecutor)
 					})
 				}
 				pipeline = append(pipeline, common.NewParallelExecutor(maxParallel, stageExecutor...))
@@ -216,7 +236,55 @@ func (runner *runnerImpl) NewPlanExecutor(plan *model.Plan) common.Executor {
 		})
 	}
 
-	return common.NewPipelineExecutor(stagePipeline...).Then(handleFailure(plan))
+	return func(ctx context.Context) error {
+		failures, nested := ctx.Value(cleanupFailuresKey{}).(*cleanupFailures)
+		if !nested {
+			failures = &cleanupFailures{}
+			ctx = context.WithValue(ctx, cleanupFailuresKey{}, failures)
+		}
+		err := common.NewPipelineExecutor(stagePipeline...)(ctx)
+		if err == nil {
+			err = handleFailure(plan)(ctx)
+		}
+		if nested {
+			return err
+		}
+		return errors.Join(err, failures.joined())
+	}
+}
+
+func runPlannedJob(ctx context.Context, rc *RunContext, matrix map[string]interface{}, maxJobNameLen int,
+	jobExecutor func(*RunContext) (common.Executor, error)) error {
+	jobName := fmt.Sprintf("%-*s", maxJobNameLen, rc.String())
+	executor, err := jobExecutor(rc)
+	if err != nil {
+		return err
+	}
+	err = executor(common.WithJobErrorContainer(WithJobLogger(ctx, rc.Run.JobID, jobName, rc.Config, &rc.Masks, matrix)))
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if rc.cleanupError != nil {
+		failures, ok := ctx.Value(cleanupFailuresKey{}).(*cleanupFailures)
+		if !ok {
+			return err
+		}
+		if err == nil {
+			err = rc.cleanupError
+		}
+		failures.add(fmt.Errorf("job %s container cleanup: %w", rc.Run.JobID, err))
+		// Cleanup is an infrastructure failure, not a failed check.
+		// Preserve the check result for needs/always() and run all
+		// dependent jobs before reporting the infrastructure error.
+		return nil
+	}
+	if err != nil && rc.Run.Job().Result == "failure" {
+		// The job has a recorded failure. Let later stages evaluate
+		// needs/always() against it; handleFailure returns the
+		// workflow failure after those jobs have run.
+		return nil
+	}
+	return err
 }
 
 func handleFailure(plan *model.Plan) common.Executor {
