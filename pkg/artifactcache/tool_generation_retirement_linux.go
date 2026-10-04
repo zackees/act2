@@ -26,6 +26,11 @@ func retireToolGeneration(ctx context.Context, root, id string, maxBytes int64) 
 		return err
 	}
 	defer catalog.Close()
+	return retireToolGenerationLocked(ctx, root, id, maxBytes)
+}
+
+// Caller holds the original catalog writer throughout retirement.
+func retireToolGenerationLocked(ctx context.Context, root, id string, maxBytes int64) error {
 	selection, err := readToolGenerationSelection(root)
 	if err != nil {
 		return err
