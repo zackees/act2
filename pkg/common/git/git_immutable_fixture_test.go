@@ -2,10 +2,10 @@ package git
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
-	"net/http/cgi"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -106,12 +106,8 @@ type immutableHTTP struct {
 
 func newImmutableHTTP(t *testing.T, fixture immutableFixture) *immutableHTTP {
 	t.Helper()
-	gitPath, err := exec.LookPath("git")
+	_, err := exec.LookPath("git")
 	require.NoError(t, err)
-	backend := &cgi.Handler{Path: gitPath, Args: []string{"http-backend"}, Root: "/git", Dir: fixture.dir,
-		Env:    []string{"GIT_PROJECT_ROOT=" + fixture.dir, "GIT_HTTP_EXPORT_ALL=1", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null"},
-		Stderr: io.Discard,
-	}
 	state := &immutableHTTP{}
 	state.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		state.mu.Lock()
@@ -144,10 +140,47 @@ func newImmutableHTTP(t *testing.T, fixture immutableFixture) *immutableHTTP {
 			}
 			r.Body = io.NopCloser(bytes.NewReader(body))
 		}
-		backend.ServeHTTP(w, r)
+		serveImmutableUploadPack(t, fixture.dir, w, r)
 	}))
 	t.Cleanup(state.server.Close)
 	return state
+}
+
+// Stream the real Git smart-HTTP protocol directly, without CGI or a shell.
+// The command runs only in the isolated fixture runner, with no inherited Git
+// configuration, alternate object store, hooks or HTTP credential environment.
+func serveImmutableUploadPack(t *testing.T, dir string, w http.ResponseWriter, r *http.Request) {
+	t.Helper()
+	var command *exec.Cmd
+	switch {
+	case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/info/refs") && r.URL.Query().Get("service") == "git-upload-pack":
+		w.Header().Set("Content-Type", "application/x-git-upload-pack-advertisement")
+		_, _ = fmt.Fprint(w, "001e# service=git-upload-pack\n0000")
+		command = exec.Command("git", "upload-pack", "--stateless-rpc", "--advertise-refs", ".")
+	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/git-upload-pack"):
+		w.Header().Set("Content-Type", "application/x-git-upload-pack-result")
+		command = exec.Command("git", "upload-pack", "--stateless-rpc", ".")
+	default:
+		http.Error(w, "unsupported fixture Git request", http.StatusNotFound)
+		return
+	}
+	command.Dir = filepath.Join(dir, "fixture.git")
+	command.Env = []string{"PATH=" + os.Getenv("PATH"), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_PROTOCOL=version=0"}
+	command.Stdin, command.Stdout, command.Stderr = r.Body, w, io.Discard
+	if r.Context().Err() != nil {
+		return
+	}
+	if err := command.Start(); err != nil {
+		t.Errorf("fixture upload-pack start failed: %v", err)
+		return
+	}
+	// Register after Start so cancellation always sees the child process.
+	// AfterFunc also runs immediately if cancellation raced with Start.
+	stop := context.AfterFunc(r.Context(), func() { _ = command.Process.Kill() })
+	defer stop()
+	if err := command.Wait(); err != nil && r.Context().Err() == nil {
+		t.Errorf("fixture upload-pack failed: %v", err)
+	}
 }
 
 func (state *immutableHTTP) url() string { return state.server.URL + "/git/fixture.git" }
