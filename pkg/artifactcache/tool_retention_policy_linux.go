@@ -66,6 +66,12 @@ func retainToolStore(ctx context.Context, root string, policy ToolRetentionPolic
 		report.fail(err)
 		return report
 	}
+	report.StageRetention = retireToolStagesLocked(ctx, catalog, root, policy.ExpireBefore, policy.MaxEntries)
+	report.After = report.StageRetention.After
+	if report.StageRetention.Partial {
+		report.fail(fmt.Errorf("stage retention incomplete: %s", report.StageRetention.Error))
+		return report
+	}
 	report = sweepToolGenerations(ctx, root, policy, selection, candidates, report)
 	if report.Partial {
 		return report

@@ -31,6 +31,12 @@ func retireToolStages(ctx context.Context, root string, expireBefore time.Time, 
 		return report
 	}
 	defer catalog.Close()
+	return retireToolStagesLocked(ctx, catalog, root, expireBefore, maxEntries)
+}
+
+// Caller holds original catalog exclusion for complete sweep.
+func retireToolStagesLocked(ctx context.Context, catalog transferLease, root string, expireBefore time.Time, maxEntries int) (report ToolStageRetentionReport) {
+	report.SchemaVersion = 1
 	rows, err := loadToolStageOwnership(catalog, root)
 	if err != nil {
 		report.fail(err)
