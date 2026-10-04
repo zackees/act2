@@ -155,3 +155,19 @@ func TestHostDockerRestoreRejectsOversizedStreamBeforeMutation(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "original", string(contents))
 }
+
+func TestHostDockerRestoreRetainsBackupsWhenRollbackCannotComplete(t *testing.T) {
+	directory := t.TempDir()
+	root, err := os.OpenRoot(directory)
+	require.NoError(t, err)
+	require.NoError(t, root.Mkdir(".restore-test", 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(directory, ".restore-test", "backup"), []byte("original"), 0600))
+	plan := &hostRestorePlan{root: root, scratch: ".restore-test", originalTime: time.Now(), mutations: []hostRestoreMutation{{path: "missing-parent/original", backup: ".restore-test/backup"}}}
+	// A lost parent is an ordinary filesystem failure. If rollback cannot return
+	// the backup to its destination, cleanup must preserve the recoverable bytes.
+	require.Error(t, plan.rollback())
+	assert.Error(t, plan.cleanup())
+	data, err := os.ReadFile(filepath.Join(directory, ".restore-test", "backup"))
+	require.NoError(t, err)
+	assert.Equal(t, "original", string(data))
+}

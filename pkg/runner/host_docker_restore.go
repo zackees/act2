@@ -45,13 +45,14 @@ type hostRestoreMutation struct {
 	oldMode      fs.FileMode
 }
 type hostRestorePlan struct {
-	root          *os.Root
-	scratch       string
-	originalTime  time.Time
-	entries       []hostRestoreEntry
-	mutations     []hostRestoreMutation
-	directories   map[string]hostRestoreDirectory
-	stagedEntries int
+	root             *os.Root
+	scratch          string
+	originalTime     time.Time
+	entries          []hostRestoreEntry
+	mutations        []hostRestoreMutation
+	directories      map[string]hostRestoreDirectory
+	stagedEntries    int
+	recoveryRequired bool
 }
 
 func restoreHostDockerFiles(ctx context.Context, action container.Container, paths []hostDockerPath) (result error) {
@@ -467,9 +468,20 @@ func (plan *hostRestorePlan) rollback() error {
 			result = errors.Join(result, plan.root.Rename(mutation.backup, mutation.path))
 		}
 	}
+	plan.recoveryRequired = result != nil
 	return result
 }
+
+type hostRestoreRecoveryError struct{ directory string }
+
+func (err *hostRestoreRecoveryError) Error() string {
+	return "host Docker restore rollback incomplete; backup retained in " + err.directory
+}
 func (plan *hostRestorePlan) cleanup() error {
+	if plan.recoveryRequired {
+		return errors.Join(&hostRestoreRecoveryError{directory: filepath.Join(plan.root.Name(), plan.scratch)}, plan.root.Close())
+	}
+
 	err := plan.root.RemoveAll(plan.scratch)
 	err = errors.Join(err, plan.root.Chtimes(".", plan.originalTime, plan.originalTime))
 	return errors.Join(err, plan.root.Close())

@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -55,7 +56,14 @@ func (transfer *hostDockerTransfer) restore(action container.Container) common.E
 		if !transfer.staged {
 			return nil
 		}
-		return restoreHostDockerFiles(ctx, action, transfer.paths)
+		err := restoreHostDockerFiles(ctx, action, transfer.paths)
+		var recovery *hostRestoreRecoveryError
+		if errors.As(err, &recovery) {
+			// Job cleanup must not discard the only surviving originals after an I/O
+			// failure prevents rollback. The error identifies the owned recovery path.
+			transfer.host.CleanUp = func() {}
+		}
+		return err
 	}
 }
 func hostDockerEnv(rc *RunContext, key, value string) string {
