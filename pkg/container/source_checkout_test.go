@@ -147,3 +147,50 @@ func TestSourceAdmissionRejectsRequestedSourceAndBroadOwnership(t *testing.T) {
 	environment.Workdir = filepath.Join(root, "outside")
 	assert.Error(t, environment.validateSourceOwnedTree(environment.Path))
 }
+
+func TestSourceAdmissionRejectsAliasedAndOverlappingFrozenSource(t *testing.T) {
+	for _, scenario := range []string{"alias-to-destination", "alias-to-owned-child", "source-inside-owned-root", "owned-root-inside-source"} {
+		t.Run(scenario, func(t *testing.T) {
+			root := t.TempDir()
+			owned := filepath.Join(root, "owned")
+			require.NoError(t, os.Mkdir(owned, 0700))
+			destination := filepath.Join(owned, "workspace")
+			require.NoError(t, os.Mkdir(destination, 0700))
+			source := filepath.Join(root, "source")
+			require.NoError(t, os.Mkdir(source, 0700))
+			switch scenario {
+			case "alias-to-destination":
+				source = filepath.Join(root, "alias")
+				require.NoError(t, os.Symlink(destination, source))
+			case "alias-to-owned-child":
+				child := filepath.Join(owned, "frozen")
+				require.NoError(t, os.Mkdir(child, 0700))
+				source = filepath.Join(root, "alias")
+				require.NoError(t, os.Symlink(child, source))
+			case "source-inside-owned-root":
+				source = filepath.Join(owned, "frozen")
+				require.NoError(t, os.Mkdir(source, 0700))
+			case "owned-root-inside-source":
+				source = root
+			}
+			sentinel := filepath.Join(source, "source.rs")
+			require.NoError(t, os.WriteFile(sentinel, []byte("frozen"), 0600))
+			privateSentinel := filepath.Join(destination, "private.rs")
+			require.NoError(t, os.WriteFile(privateSentinel, []byte("untouched"), 0600))
+			receiver := &rejectingSourceReceiver{}
+			environment := HostEnvironment{Path: destination, OwnedRoot: owned, Workdir: source, SourceReceiver: receiver}
+			// Exercise CopyDir's admission operation, without invoking ordinary
+			// cold copying onto a deliberately overlapping source fixture.
+			handled, err := environment.receiveSourceCheckout(context.Background(), destination, source, false)
+			require.NoError(t, err)
+			assert.False(t, handled)
+			assert.Zero(t, receiver.calls, "unsafe ownership must reject before materialization")
+			body, err := os.ReadFile(sentinel)
+			require.NoError(t, err)
+			assert.Equal(t, "frozen", string(body))
+			body, err = os.ReadFile(privateSentinel)
+			require.NoError(t, err)
+			assert.Equal(t, "untouched", string(body), "admission must not discard any workspace")
+		})
+	}
+}
