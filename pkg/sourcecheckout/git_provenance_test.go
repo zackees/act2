@@ -115,6 +115,13 @@ func TestFrozenDigestUsesComponentOrdering(t *testing.T) {
 }
 
 func TestFrozenCheckoutRejectsUnboundedObjectDecoding(t *testing.T) {
+	t.Run("external-common-store", func(t *testing.T) {
+		root, _, identity := gitFixture(t, "source")
+		require.NoError(t, os.WriteFile(filepath.Join(root, ".git/commondir"), []byte("/untrusted"), 0600))
+		_, err := ReadFrozenCheckout(root, root, identity, DefaultLimits())
+		assert.Error(t, err)
+	})
+
 	t.Run("packed-store", func(t *testing.T) {
 		root, _, identity := gitFixture(t, "source")
 		pack := filepath.Join(root, ".git/objects/pack")

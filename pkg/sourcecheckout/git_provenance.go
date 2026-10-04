@@ -331,7 +331,7 @@ func boundedGitMetadata(root string) error {
 			}
 			inflated += size
 		}
-		if relative == "objects/info/alternates" {
+		if relative == "objects/info/alternates" || relative == "commondir" {
 			return fmt.Errorf("Git alternate object stores are unsupported")
 		}
 		return nil
