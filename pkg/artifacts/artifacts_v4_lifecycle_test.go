@@ -94,6 +94,9 @@ func TestV4BlockDownloadClosesFileBeforeDeletion(t *testing.T) {
 	require.NoError(t, err)
 	tracked := &trackedArtifactFile{File: file}
 	route := boundedArtifactRoute(t)
+	archive := filepath.Join(route.baseDir, "1", "bundle", "bundle.zip")
+	require.NoError(t, os.MkdirAll(filepath.Dir(archive), 0755))
+	require.NoError(t, os.WriteFile(archive, []byte("payload"), 0600))
 	route.rfs = trackedArtifactFS{file: tracked}
 	route.AppURL = "localhost"
 	route.prefix = ArtifactV4RouteBase
@@ -132,4 +135,33 @@ func TestV4BlockDownloadRejectsMissingEntryBeforeFirstCommit(t *testing.T) {
 	route.downloadArtifact(&ArtifactContext{Req: req, Resp: rec})
 	require.Equal(t, http.StatusNotFound, rec.Code)
 	require.False(t, opened, "a lookup miss must not open an archive created by a racing first commit")
+}
+
+func TestV4BlockInitialDownloadLocksPreexistingArchive(t *testing.T) {
+	route := boundedArtifactRoute(t)
+	route.limits.MaxTotalBytes = 32
+	archive := filepath.Join(route.baseDir, "1", "bundle", "bundle.zip")
+	require.NoError(t, os.MkdirAll(filepath.Dir(archive), 0755))
+	require.NoError(t, os.WriteFile(archive, []byte("original"), 0600))
+	route.AppURL = "localhost"
+	route.prefix = ArtifactV4RouteBase
+	route.rfs = firstCommitArtifactFS{open: func(name string) (fs.File, error) {
+		// The first staging request may initialize the inventory after download has
+		// selected its path. Attempt the same exclusive lease used by assembly.
+		require.Equal(t, http.StatusCreated, stageTestBlock(t, route, "bundle", "one", "new"))
+		store := route.blockState.store.Load()
+		entry := store.lookup("1/bundle/bundle.zip")
+		require.NotNil(t, entry)
+		if entry.mu.TryLock() {
+			// Reproduce the partial prefix visible while a first commit is streaming.
+			require.NoError(t, os.WriteFile(archive, []byte("partial"), 0600))
+			entry.mu.Unlock()
+		}
+		return os.Open(name)
+	}}
+	req := httptest.NewRequest(http.MethodGet, route.buildArtifactURL("DownloadArtifact", "bundle", 1), nil)
+	rec := httptest.NewRecorder()
+	route.downloadArtifact(&ArtifactContext{Req: req, Resp: rec})
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "original", rec.Body.String(), "initial inventory must lease the preexisting archive before opening it")
 }

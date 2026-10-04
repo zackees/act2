@@ -611,20 +611,28 @@ func (r *artifactV4Routes) downloadArtifact(ctx *ArtifactContext) {
 	safePath := safeResolve(safeRunPath, artifactName)
 	safePath = safeResolve(safePath, artifactName+".zip")
 
-	if store := r.blockState.store.Load(); store != nil {
-		relative, err := filepath.Rel(r.baseDir, safePath)
-		if err != nil {
-			artifactBlockError(ctx, err)
-			return
-		}
-		entry := store.lookup(relative)
-		if entry == nil {
+	root, store, err := r.openBlockStore()
+	if err != nil {
+		if os.IsNotExist(err) {
 			ctx.Error(http.StatusNotFound)
-			return
+		} else {
+			artifactBlockError(ctx, err)
 		}
-		entry.mu.RLock()
-		defer entry.mu.RUnlock()
+		return
 	}
+	defer root.Close()
+	relative, err := filepath.Rel(r.baseDir, safePath)
+	if err != nil {
+		artifactBlockError(ctx, err)
+		return
+	}
+	entry := store.lookup(relative)
+	if entry == nil {
+		ctx.Error(http.StatusNotFound)
+		return
+	}
+	entry.mu.RLock()
+	defer entry.mu.RUnlock()
 	file, err := r.rfs.Open(safePath)
 	if err != nil {
 		ctx.Error(http.StatusNotFound)
