@@ -9,6 +9,9 @@ import (
 // MaxBytes=0 disables the byte ceiling; age limits remain enabled.
 // Five-minute incomplete/recent-use grace periods protect normal transfers.
 type Policy struct {
+	// CohortRoot enrolls new namespaces in exclusive aggregate maintenance.
+	// Existing legacy namespaces cannot be enrolled implicitly.
+	CohortRoot string
 	MaxBytes   int64
 	MaxAge     time.Duration
 	UnusedAge  time.Duration

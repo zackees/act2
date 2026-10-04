@@ -22,6 +22,7 @@ const (
 	EvictionMaxAge     EvictionReason = "absolute_age"
 	EvictionSuperseded EvictionReason = "superseded"
 	EvictionBudget     EvictionReason = "byte_budget"
+	EvictionAggregate  EvictionReason = "aggregate_budget"
 )
 
 type EvictionReceipt struct {

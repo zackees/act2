@@ -100,3 +100,42 @@ Tests cover both successful byte eviction and a protected over-budget namespace.
 Aggregate machine budgeting, sustained warm-run benchmarks and Bosn integration
 remain open. The Bosn pin still selects released act2;
 this branch authorizes no host-cache deletion.
+
+## Aggregate retention (local candidate)
+
+Servers can opt into `--cache-server-cohort-root ROOT`; their namespace must be
+a direct child of ROOT. Each server holds a shared root lease until it closes.
+Existing legacy namespaces are refused rather than implicitly enrolled. Cohort
+namespaces also refuse candidate servers that omit the root. Use a new directory
+cohort that the released Bosn/act2 pins never address. The marker is a protocol
+identity, not protection against arbitrary legacy programs writing that path.
+Migrating completed legacy archives into this cohort remains required for rollout.
+
+`cache prune-cohort --cache-server-path ROOT --max-bytes N --apply` holds the
+exclusive root lease, excluding live servers and new namespace creation. It locks
+and validates every namespace before any deletion. Busy, unknown, legacy, partial
+or oversized inventories refuse the pass. The directory page is bounded to 64
+namespaces; callers must not interpret a refused oversized cohort as empty.
+The pass first applies namespace age/byte policy, then evicts eligible archives
+in global UsedAt order with deterministic namespace/ID ties. Recent-use protection
+still applies. Per-namespace receipts distinguish aggregate-budget eviction.
+The report includes remaining completed bytes, protected bytes and budget outcome.
+
+Verification: two namespaces each within a 160-byte local ceiling leave 320 bytes
+under namespace maintenance alone; aggregate maintenance retains the newest 160
+bytes in the warmer repository. An unknown file in the last namespace prevents
+any removal in the first. A live server excludes aggregate maintenance; an
+exclusive root lease prevents new namespace creation. Tests also cover protected
+aggregate overflow, legacy refusal and absent-root noncreation. The full
+artifactcache race suite passes (16.77 seconds), focused offline CLI/policy tests
+pass, and pinned golangci-lint v2.11.4 reports zero issues. Bounded directory
+reads initially exposed nondeterministic report ordering; namespaces now sort by
+name before validation, and the global eviction order has explicit stable ties.
+
+This policy bounds completed archive lengths only. Metadata, temporary/untracked
+files, allocated blocks, other cache classes and host image/build-cache storage
+still require Bosn accounting and separate retention. The root exclusion policy
+is conservative: any live server defers aggregate collection, even when idle.
+Bosn wiring, scheduled retry, versioned warm migration and sustained concurrent
+workload validation remain open. Nothing enables eviction on the existing host
+cache or changes the released Bosn pin.

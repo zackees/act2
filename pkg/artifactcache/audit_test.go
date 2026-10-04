@@ -18,6 +18,13 @@ func seedAuditStore(t *testing.T, dir string, n int) *Handler {
 	t.Helper()
 	h, err := StartHandler(dir, "", "127.0.0.1", 0, nil)
 	require.NoError(t, err)
+	seedAuditEntries(t, h, n)
+	require.NoError(t, h.Close())
+	return h
+}
+
+func seedAuditEntries(t *testing.T, h *Handler, n int) {
+	t.Helper()
 	db, err := h.openDB()
 	require.NoError(t, err)
 	now := time.Now().Add(-time.Hour).Unix()
@@ -25,12 +32,10 @@ func seedAuditStore(t *testing.T, dir string, n int) *Handler {
 		cache := &Cache{Key: fmt.Sprintf("warm-%d", i), Version: "v", Complete: true, Size: 80, CreatedAt: now, UsedAt: now}
 		require.NoError(t, insertCache(db, cache))
 		name := h.storage.filename(cache.ID)
-		require.NoError(t, os.MkdirAll(filepath.Dir(name), 0o755))
-		require.NoError(t, os.WriteFile(name, make([]byte, 80), 0o600))
+		require.NoError(t, os.MkdirAll(filepath.Dir(name), 0o755))      // #nosec G703 -- synthetic fixture archive.
+		require.NoError(t, os.WriteFile(name, make([]byte, 80), 0o600)) // #nosec G703 -- synthetic fixture archive.
 	}
 	require.NoError(t, db.Close())
-	require.NoError(t, h.Close())
-	return h
 }
 
 func TestAuditPagesAreConsistentAndDoNotChangeStore(t *testing.T) {

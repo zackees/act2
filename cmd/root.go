@@ -124,6 +124,7 @@ func createRootCommand(ctx context.Context, input *Input, version string) *cobra
 	rootCmd.PersistentFlags().StringVarP(&input.cacheServerAddr, "cache-server-addr", "", common.GetOutboundIP().String(), "Defines the address to which the cache server binds.")
 	rootCmd.PersistentFlags().Uint16VarP(&input.cacheServerPort, "cache-server-port", "", 0, "Defines the port where the artifact server listens. 0 means a randomly available port.")
 	cacheDefaults := artifactcache.DefaultPolicy()
+	rootCmd.PersistentFlags().StringVar(&input.cachePolicy.CohortRoot, "cache-server-cohort-root", "", "Enroll a new direct-child namespace in coordinated aggregate retention; refuses legacy stores")
 	rootCmd.PersistentFlags().Int64Var(&input.cachePolicy.MaxBytes, "cache-server-max-bytes", cacheDefaults.MaxBytes, "Maximum completed archive bytes per cache namespace; 0 disables the byte ceiling")
 	rootCmd.PersistentFlags().DurationVar(&input.cachePolicy.MaxAge, "cache-server-max-age", cacheDefaults.MaxAge, "Maximum archive age (for example 720h); recent transfers are protected")
 	rootCmd.PersistentFlags().DurationVar(&input.cachePolicy.UnusedAge, "cache-server-unused-age", cacheDefaults.UnusedAge, "Expire archives unused for this duration")

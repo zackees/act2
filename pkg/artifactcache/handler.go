@@ -42,6 +42,7 @@ type Handler struct {
 	policy          Policy
 	stopMaintenance chan struct{}
 	maintenanceDone chan struct{}
+	cohortLease     *bbolt.DB
 
 	outboundIP        string
 	customExternalURL string
@@ -75,6 +76,17 @@ func StartHandlerWithPolicy(dir, customExternalURL string, outboundIP string, po
 		}
 		dir = filepath.Join(home, ".cache", "actcache")
 	}
+	lease, err := enrollCohort(dir, policy.CohortRoot)
+	if err != nil {
+		return nil, err
+	}
+	h.cohortLease = lease
+	started := false
+	defer func() {
+		if !started && lease != nil {
+			_ = lease.Close()
+		}
+	}()
 	//nolint:gosec // This directory is explicitly selected by the local CLI caller, not an HTTP request.
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
@@ -139,6 +151,7 @@ func StartHandlerWithPolicy(dir, customExternalURL string, outboundIP string, po
 	h.listener = listener
 	h.server = server
 	h.startMaintenance()
+	started = true
 
 	return h, nil
 }
@@ -180,6 +193,10 @@ func (h *Handler) Close() error {
 			retErr = err
 		}
 		h.listener = nil
+	}
+	if h.cohortLease != nil {
+		retErr = errors.Join(retErr, h.cohortLease.Close())
+		h.cohortLease = nil
 	}
 	return retErr
 }
