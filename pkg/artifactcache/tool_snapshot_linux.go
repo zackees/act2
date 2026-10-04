@@ -98,7 +98,8 @@ func publishToolSnapshotWithSync(ctx context.Context, source, root string, maxBy
 		report.fail(err)
 		return report
 	}
-	stage, err := os.MkdirTemp(root, ".tool-stage-")
+	stage, err := createOwnedToolStage(lease, root, root, ".tool-stage-")
+	report.PendingStage = stage
 	if err != nil {
 		report.fail(err)
 		return report
@@ -106,7 +107,7 @@ func publishToolSnapshotWithSync(ctx context.Context, source, root string, maxBy
 	report.PendingStage = stage
 	defer func() {
 		if report.PendingStage != "" {
-			if err := os.RemoveAll(stage); err != nil {
+			if err := cleanupOwnedToolStage(ctx, lease, root, stage); err != nil {
 				report.fail(fmt.Errorf("tool stage cleanup failed: %w", err))
 			} else {
 				report.PendingStage = ""
@@ -128,6 +129,8 @@ func publishToolSnapshotWithSync(ctx context.Context, source, root string, maxBy
 	}
 	report.Published, report.PendingStage = true, ""
 	if err = syncRoot(root); err != nil {
+		report.fail(err)
+	} else if err = finishOwnedToolStage(lease, root, stage); err != nil {
 		report.fail(err)
 	}
 	return report
