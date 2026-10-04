@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"testing/fstest"
 
@@ -17,6 +19,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 
+	"github.com/nektos/act/pkg/common"
 	"github.com/nektos/act/pkg/model"
 	"github.com/nektos/act/pkg/runner"
 )
@@ -241,8 +244,6 @@ type TestJobFileInfo struct {
 
 var (
 	artifactsPath = path.Join(os.TempDir(), "test-artifacts")
-	artifactsAddr = "127.0.0.1"
-	artifactsPort = "12345"
 )
 
 func TestArtifactFlow(t *testing.T) {
@@ -251,9 +252,28 @@ func TestArtifactFlow(t *testing.T) {
 	}
 
 	ctx := context.Background()
-
-	cancel := Serve(ctx, artifactsPath, artifactsAddr, artifactsPort)
-	defer cancel()
+	router := httprouter.New()
+	fsys := readWriteFSImpl{}
+	uploads(router, artifactsPath, fsys)
+	downloads(router, artifactsPath, fsys)
+	RoutesV4(router, artifactsPath, fsys, fsys)
+	var ownRequests atomic.Int64
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		ownRequests.Add(1)
+		router.ServeHTTP(w, req)
+	}))
+	listener, err := net.Listen("tcp", net.JoinHostPort(common.GetOutboundIP().String(), "0"))
+	if !assert.NoError(t, err) {
+		return
+	}
+	_ = server.Listener.Close()
+	server.Listener = listener
+	server.Start()
+	defer server.Close()
+	token, err := common.CreateAuthorizationToken(1, 1, 1)
+	if !assert.NoError(t, err) {
+		return
+	}
 
 	platforms := map[string]string{
 		"ubuntu-latest": "node:16-buster", // Don't use node:16-buster-slim because it doesn't have curl command, which is used in the tests
@@ -267,11 +287,13 @@ func TestArtifactFlow(t *testing.T) {
 	log.SetLevel(log.DebugLevel)
 
 	for _, table := range tables {
-		runTestJobFile(ctx, t, table)
+		before := ownRequests.Load()
+		runTestJobFile(ctx, t, table, server.URL+"/", token)
+		assert.Greater(t, ownRequests.Load(), before, "fixture must exercise its own artifact service")
 	}
 }
 
-func runTestJobFile(ctx context.Context, t *testing.T, tjfi TestJobFileInfo) {
+func runTestJobFile(ctx context.Context, t *testing.T, tjfi TestJobFileInfo, artifactURL, token string) {
 	t.Run(tjfi.workflowPath, func(t *testing.T) {
 		fmt.Printf("::group::%s\n", tjfi.workflowPath)
 
@@ -290,9 +312,13 @@ func runTestJobFile(ctx context.Context, t *testing.T, tjfi TestJobFileInfo) {
 			ReuseContainers:       false,
 			ContainerArchitecture: tjfi.containerArchitecture,
 			GitHubInstance:        "github.com",
-			ArtifactServerPath:    artifactsPath,
-			ArtifactServerAddr:    artifactsAddr,
-			ArtifactServerPort:    artifactsPort,
+			// Explicit fixture URLs avoid inherited outer-runner service variables.
+			// The fixture starts its server above; no runner-managed server is needed.
+			Env: map[string]string{
+				"ACTIONS_RUNTIME_URL":   artifactURL,
+				"ACTIONS_RESULTS_URL":   artifactURL,
+				"ACTIONS_RUNTIME_TOKEN": token,
+			},
 		}
 
 		runner, err := runner.New(runnerConfig)
