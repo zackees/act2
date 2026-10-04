@@ -34,3 +34,22 @@ Read-only cached compiler outputs are outside the source inventory and merge.
 Tests cover identity preservation, changes/deletions/renames, executable modes,
 symlink and directory transitions, staging tampering, protected state and bounds.
 They run through a pinned Go image under Bosn, never on the developer host.
+
+`ReadFrozenCheckout` reads explicit controller-provided original/effective commit,
+Git tree, and Bosn source digest identities from an independent frozen Git store.
+Dirty snapshots must bind the synthetic commit and its original parent. Cached
+`.git` is never an authority. Git commands, hooks, credentials and fetching are
+not used. Loose object headers and inflated byte totals are checked before the
+Go-git decoder; packed stores, alternate stores, LFS pointers, submodules and
+missing objects currently fail cold.
+
+`PrepareHandoff` separates authenticated source receipts from approved-writer
+and materialization grants. The interfaces require a trusted receiver; no
+production authority provider is implemented. A candidate's content seal cannot
+approve a writer or authenticate an archive. The container preparation method
+also binds these receipts to the actual frozen source and private writable
+workspace. Preparation is read-only. `HostEnvironment.CopyDir` still performs
+ordinary checkout on every production call, including unsupported or missing
+handoffs. Authoritative `.git` replacement, bounded archive transport, compatible
+Cargo/Dylint output delivery, and physical PR-to-main promotion remain required
+before activation; this API slice does not complete CACHE-028.
