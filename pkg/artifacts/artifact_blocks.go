@@ -6,14 +6,17 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	log "github.com/sirupsen/logrus"
 )
 
 var errArtifactLimit = errors.New("artifact service resource limit exceeded")
+var errArtifactIncomplete = errors.New("artifact block is not completed")
 
 // Local disk policy, not a claim about GitHub's hosted artifact quota. The block
 // ceiling and count retain Azure's documented 4000 MiB / 50000-block semantics.
@@ -30,14 +33,17 @@ func defaultArtifactLimits() (ArtifactLimits, error) {
 }
 
 type artifactBlockState struct {
-	once  sync.Once
-	store *artifactBlockStore
-	err   error
+	lifecycle sync.RWMutex
+	once      sync.Once
+	store     atomic.Pointer[artifactBlockStore]
+	err       error
 }
 
 type artifactStoredFile struct {
-	mu   sync.Mutex
-	size int64
+	mu       sync.RWMutex
+	size     int64
+	complete bool
+	staged   bool
 }
 
 type artifactBlockStore struct {
@@ -80,7 +86,7 @@ func (r *artifactV4Routes) openBlockStore() (*os.Root, *artifactBlockStore, erro
 			if err != nil {
 				return err
 			}
-			store.files[name] = &artifactStoredFile{size: info.Size()}
+			store.files[name] = &artifactStoredFile{size: info.Size(), complete: true, staged: strings.Contains(filepath.ToSlash(name), "/.blocks/")}
 			if info.Size() > limits.MaxTotalBytes-store.total {
 				return errArtifactLimit
 			}
@@ -93,13 +99,13 @@ func (r *artifactV4Routes) openBlockStore() (*os.Root, *artifactBlockStore, erro
 			}
 			return nil
 		})
-		r.blockState.store = store
+		r.blockState.store.Store(store)
 	})
 	if r.blockState.err != nil {
 		_ = root.Close()
 		return nil, nil, r.blockState.err
 	}
-	return root, r.blockState.store, nil
+	return root, r.blockState.store.Load(), nil
 }
 
 func (store *artifactBlockStore) prepareBlockDirectory(root *os.Root, relative string) error {
@@ -121,6 +127,7 @@ func (store *artifactBlockStore) prepareBlockDirectory(root *os.Root, relative s
 }
 
 func (store *artifactBlockStore) file(relative string, block bool) (*artifactStoredFile, error) {
+	relative = filepath.ToSlash(relative)
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	if entry, ok := store.files[relative]; ok {
@@ -129,7 +136,7 @@ func (store *artifactBlockStore) file(relative string, block bool) (*artifactSto
 	if block && store.count >= store.limits.MaxBlocks {
 		return nil, errArtifactLimit
 	}
-	entry := &artifactStoredFile{}
+	entry := &artifactStoredFile{staged: block}
 	store.files[relative] = entry
 	if block {
 		store.count++
@@ -155,6 +162,7 @@ func (store *artifactBlockStore) openWriter(root *os.Root, relative string, entr
 	store.mu.Lock()
 	store.total -= entry.size
 	entry.size = 0
+	entry.complete = false
 	store.mu.Unlock()
 	return &boundedArtifactWriter{file: file, store: store, entry: entry, limit: limit}, nil
 }
@@ -193,10 +201,16 @@ func (writer *boundedArtifactWriter) finish(copyErr error) error {
 		writer.entry.size = 0
 		writer.store.mu.Unlock()
 	}
-	return writer.file.Close()
+	closeErr := writer.file.Close()
+	writer.entry.complete = copyErr == nil && closeErr == nil
+	return closeErr
 }
 
 func artifactBlockError(ctx *ArtifactContext, err error) {
+	if errors.Is(err, errArtifactIncomplete) {
+		ctx.Error(http.StatusBadRequest)
+		return
+	}
 	if errors.Is(err, errArtifactLimit) {
 		ctx.Error(http.StatusRequestEntityTooLarge)
 		return
@@ -208,4 +222,70 @@ func artifactBlockError(ctx *ArtifactContext, err error) {
 	}
 	// Do not include paths, signed URLs, or request bodies in client diagnostics.
 	ctx.Error(http.StatusInternalServerError)
+}
+
+// Lock order: lifecycle lease, staged files in path order, archive, quota mutex.
+// Never hold the quota mutex while waiting for a file lock.
+type artifactBlockSnapshot struct{ files []*artifactStoredFile }
+
+func (snapshot *artifactBlockSnapshot) unlock() {
+	for i := len(snapshot.files) - 1; i >= 0; i-- {
+		snapshot.files[i].mu.RUnlock()
+	}
+}
+
+func (store *artifactBlockStore) snapshotCompletedBlocks(paths []string) (*artifactBlockSnapshot, error) {
+	sorted := append([]string(nil), paths...)
+	sort.Strings(sorted)
+	snapshot := &artifactBlockSnapshot{}
+	store.mu.Lock()
+	previous := ""
+	for _, path := range sorted {
+		key := filepath.ToSlash(path)
+		if key == previous {
+			continue
+		}
+		previous = key
+		entry, ok := store.files[key]
+		if !ok {
+			store.mu.Unlock()
+			return nil, errArtifactIncomplete
+		}
+		snapshot.files = append(snapshot.files, entry)
+	}
+	store.mu.Unlock()
+	for i, entry := range snapshot.files {
+		entry.mu.RLock()
+		if !entry.complete {
+			for j := i; j >= 0; j-- {
+				snapshot.files[j].mu.RUnlock()
+			}
+			return nil, errArtifactIncomplete
+		}
+	}
+	return snapshot, nil
+}
+
+func (store *artifactBlockStore) lookup(relative string) *artifactStoredFile {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	return store.files[filepath.ToSlash(relative)]
+}
+
+// Call only with the exclusive lifecycle lease: no upload, commit or download
+// can retain a file or its accounting while the corresponding tree is removed.
+func (store *artifactBlockStore) forget(relative string, tree bool) {
+	key := filepath.ToSlash(relative)
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	for name, entry := range store.files {
+		if name != key && (!tree || !strings.HasPrefix(name, key+"/")) {
+			continue
+		}
+		store.total -= entry.size
+		if entry.staged {
+			store.count--
+		}
+		delete(store.files, name)
+	}
 }

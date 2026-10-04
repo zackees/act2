@@ -20,5 +20,10 @@ retries replace their previous byte accounting. Existing files are inventoried
 before the first block request. This budget applies to the V4 block staging and
 assembly paths; the older V3 and append-block implementations are unchanged.
 
+Commit waits for concurrent block retries to finish and reads completed blocks
+under shared locks. Artifact deletion waits for active uploads, assembly, and
+downloads, then reclaims the deleted files' byte budget and staged-ID count.
+Downloads close their files before releasing the artifact's lifecycle lease.
+
 Sources: [Azure scalability targets](https://learn.microsoft.com/en-us/azure/storage/blobs/scalability-targets),
 [the exact stock v4 uploader](https://github.com/actions/upload-artifact/blob/ea165f8d65b6e75b540449e92b4886f43607fa02/dist/upload/index.js).

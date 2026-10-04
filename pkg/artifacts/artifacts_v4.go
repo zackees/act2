@@ -278,6 +278,8 @@ func (r *artifactV4Routes) sendProtbufBody(ctx *ArtifactContext, req protoreflec
 }
 
 func (r *artifactV4Routes) createArtifact(ctx *ArtifactContext) {
+	r.blockState.lifecycle.Lock()
+	defer r.blockState.lifecycle.Unlock()
 	var req CreateArtifactRequest
 
 	if ok := r.parseProtbufBody(ctx, &req); !ok {
@@ -299,6 +301,12 @@ func (r *artifactV4Routes) createArtifact(ctx *ArtifactContext) {
 		panic(err)
 	}
 	file.Close()
+	if store := r.blockState.store.Load(); store != nil {
+		relative, err := filepath.Rel(r.baseDir, safePath)
+		if err == nil {
+			store.forget(relative, false)
+		}
+	}
 
 	respData := CreateArtifactResponse{
 		Ok:              true,
@@ -362,6 +370,8 @@ func (r *artifactV4Routes) artifactBlockPath(task int64, artifactName, blockID s
 }
 
 func (r *artifactV4Routes) stageArtifactBlock(ctx *ArtifactContext, task int64, artifactName, blockID string) {
+	r.blockState.lifecycle.RLock()
+	defer r.blockState.lifecycle.RUnlock()
 	root, store, err := r.openBlockStore()
 	if err != nil {
 		artifactBlockError(ctx, err)
@@ -413,6 +423,8 @@ type artifactBlockReference struct {
 }
 
 func (r *artifactV4Routes) commitArtifactBlocks(ctx *ArtifactContext, task int64, artifactName string) {
+	r.blockState.lifecycle.RLock()
+	defer r.blockState.lifecycle.RUnlock()
 	var list artifactBlockList
 	if err := xml.NewDecoder(io.LimitReader(ctx.Req.Body, 4<<20)).Decode(&list); err != nil {
 		ctx.Error(http.StatusBadRequest)
@@ -428,6 +440,7 @@ func (r *artifactV4Routes) commitArtifactBlocks(ctx *ArtifactContext, task int64
 		artifactBlockError(ctx, errArtifactLimit)
 		return
 	}
+	blockPaths := make([]string, 0, len(list.Blocks))
 	for _, ref := range list.Blocks {
 		if ref.ID == "" || (ref.XMLName.Local != "Latest" && ref.XMLName.Local != "Uncommitted" && ref.XMLName.Local != "Committed") {
 			ctx.Error(http.StatusBadRequest)
@@ -446,7 +459,15 @@ func (r *artifactV4Routes) commitArtifactBlocks(ctx *ArtifactContext, task int64
 			ctx.Error(http.StatusBadRequest)
 			return
 		}
+		blockPaths = append(blockPaths, relative)
 	}
+	snapshot, err := store.snapshotCompletedBlocks(blockPaths)
+	if err != nil {
+		artifactBlockError(ctx, err)
+		return
+	}
+	defer snapshot.unlock()
+
 	archivePath := safeResolve(safeResolve(safeResolve(r.baseDir, fmt.Sprint(task)), artifactName), artifactName+".zip")
 	relative, err := filepath.Rel(r.baseDir, archivePath)
 	if err != nil {
@@ -579,6 +600,8 @@ func (r *artifactV4Routes) getSignedArtifactURL(ctx *ArtifactContext) {
 }
 
 func (r *artifactV4Routes) downloadArtifact(ctx *ArtifactContext) {
+	r.blockState.lifecycle.RLock()
+	defer r.blockState.lifecycle.RUnlock()
 	task, artifactName, ok := r.verifySignature(ctx, "DownloadArtifact")
 	if !ok {
 		return
@@ -588,12 +611,31 @@ func (r *artifactV4Routes) downloadArtifact(ctx *ArtifactContext) {
 	safePath := safeResolve(safeRunPath, artifactName)
 	safePath = safeResolve(safePath, artifactName+".zip")
 
-	file, _ := r.rfs.Open(safePath)
-
-	_, _ = io.Copy(ctx.Resp, file)
+	if store := r.blockState.store.Load(); store != nil {
+		relative, err := filepath.Rel(r.baseDir, safePath)
+		if err != nil {
+			artifactBlockError(ctx, err)
+			return
+		}
+		if entry := store.lookup(relative); entry != nil {
+			entry.mu.RLock()
+			defer entry.mu.RUnlock()
+		}
+	}
+	file, err := r.rfs.Open(safePath)
+	if err != nil {
+		ctx.Error(http.StatusNotFound)
+		return
+	}
+	defer file.Close()
+	if _, err := io.Copy(ctx.Resp, file); err != nil {
+		artifactBlockError(ctx, err)
+	}
 }
 
 func (r *artifactV4Routes) deleteArtifact(ctx *ArtifactContext) {
+	r.blockState.lifecycle.Lock()
+	defer r.blockState.lifecycle.Unlock()
 	var req DeleteArtifactRequest
 
 	if ok := r.parseProtbufBody(ctx, &req); !ok {
@@ -606,7 +648,26 @@ func (r *artifactV4Routes) deleteArtifact(ctx *ArtifactContext) {
 	safeRunPath := safeResolve(r.baseDir, fmt.Sprint(runID))
 	safePath := safeResolve(safeRunPath, req.Name)
 
-	_ = os.RemoveAll(safePath)
+	relative, err := filepath.Rel(r.baseDir, safePath)
+	if err != nil {
+		artifactBlockError(ctx, err)
+		return
+	}
+	root, err := os.OpenRoot(r.baseDir)
+	if err != nil && !os.IsNotExist(err) {
+		artifactBlockError(ctx, err)
+		return
+	}
+	if root != nil {
+		defer root.Close()
+		if err := root.RemoveAll(relative); err != nil {
+			artifactBlockError(ctx, err)
+			return
+		}
+	}
+	if store := r.blockState.store.Load(); store != nil {
+		store.forget(relative, true)
+	}
 
 	respData := DeleteArtifactResponse{
 		Ok:         true,
