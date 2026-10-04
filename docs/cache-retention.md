@@ -180,3 +180,13 @@ This is copy migration, so legacy bytes remain retained and duplication must be
 included in rollout headroom. Automatic Bosn quiescence, orchestration, retry and
 cutover are open. The new cohort is not enabled on the host; no legacy host cache
 was copied or removed by these tests.
+
+Repeated-workload verification combines import, fresh HTTP servers and aggregate
+maintenance for eight cycles. Every fresh server restores the imported 80-byte
+archive. Each cycle adds 160 bytes in a cold namespace; active-server maintenance
+defers, then idle maintenance returns completed archives to at most the 160-byte
+aggregate ceiling without evicting the warm input. A final fresh server still
+restores it. This and the original import-hit test pass under the race detector
+(1.176 seconds); pinned golangci-lint reports zero issues. These are handler/file
+operations in an isolated test container, not Bosn run-container orchestration.
+Namespace metadata overhead and retained legacy-source bytes are outside the cap.

@@ -4,9 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -48,19 +45,7 @@ func TestImportPreservesLegacyDataAndWarmHit(t *testing.T) {
 	h, err := StartHandlerWithPolicy(report.Destination, "", "127.0.0.1", 0, nil, policy)
 	require.NoError(t, err)
 	defer h.Close()
-	lookup := httptest.NewRecorder()
-	h.router.ServeHTTP(lookup, httptest.NewRequest(http.MethodGet, "/"+h.token+apiPath+"/cache?keys=warm-1&version=v", nil))
-	require.Equal(t, http.StatusOK, lookup.Code, lookup.Body.String())
-	var hit struct {
-		Location string `json:"archiveLocation"`
-		Key      string `json:"cacheKey"`
-	}
-	require.NoError(t, json.Unmarshal(lookup.Body.Bytes(), &hit))
-	require.Equal(t, "warm-1", hit.Key)
-	archive := httptest.NewRecorder()
-	h.router.ServeHTTP(archive, httptest.NewRequest(http.MethodGet, hit.Location, nil))
-	require.Equal(t, http.StatusOK, archive.Code)
-	require.Equal(t, make([]byte, 80), archive.Body.Bytes())
+	assertArchiveHit(t, h, "warm-1")
 	db, err := h.openDB()
 	require.NoError(t, err)
 	cache := &Cache{Key: "new", Version: "v"}
