@@ -82,6 +82,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"hash/fnv"
@@ -303,7 +304,13 @@ func (r *artifactV4Routes) uploadArtifact(ctx *ArtifactContext) {
 
 	comp := ctx.Req.URL.Query().Get("comp")
 	switch comp {
-	case "block", "appendBlock":
+	case "block":
+		if blockID := ctx.Req.URL.Query().Get("blockid"); blockID != "" {
+			r.stageArtifactBlock(ctx, task, artifactName, blockID)
+			return
+		}
+		fallthrough
+	case "appendBlock":
 
 		safeRunPath := safeResolve(r.baseDir, fmt.Sprint(task))
 		safePath := safeResolve(safeRunPath, artifactName)
@@ -332,8 +339,85 @@ func (r *artifactV4Routes) uploadArtifact(ctx *ArtifactContext) {
 		file.Close()
 		ctx.JSON(http.StatusCreated, "appended")
 	case "blocklist":
-		ctx.JSON(http.StatusCreated, "created")
+		r.commitArtifactBlocks(ctx, task, artifactName)
 	}
+}
+
+// Hash opaque client block IDs so they cannot influence filesystem paths.
+func (r *artifactV4Routes) artifactBlockPath(task int64, artifactName, blockID string) string {
+	artifactPath := safeResolve(safeResolve(r.baseDir, fmt.Sprint(task)), artifactName)
+	digest := sha256.Sum256([]byte(blockID))
+	return safeResolve(safeResolve(artifactPath, ".blocks"), fmt.Sprintf("%x", digest))
+}
+
+func (r *artifactV4Routes) stageArtifactBlock(ctx *ArtifactContext, task int64, artifactName, blockID string) {
+	file, err := r.fs.OpenWritable(r.artifactBlockPath(task, artifactName, blockID))
+	if err != nil {
+		ctx.Error(http.StatusInternalServerError)
+		return
+	}
+	_, copyErr := io.Copy(file, ctx.Req.Body)
+	closeErr := file.Close()
+	if copyErr != nil || closeErr != nil {
+		ctx.Error(http.StatusInternalServerError)
+		return
+	}
+	ctx.JSON(http.StatusCreated)
+}
+
+type artifactBlockList struct {
+	XMLName xml.Name                 `xml:"BlockList"`
+	Blocks  []artifactBlockReference `xml:",any"`
+}
+
+type artifactBlockReference struct {
+	XMLName xml.Name
+	ID      string `xml:",chardata"`
+}
+
+func (r *artifactV4Routes) commitArtifactBlocks(ctx *ArtifactContext, task int64, artifactName string) {
+	var list artifactBlockList
+	if err := xml.NewDecoder(io.LimitReader(ctx.Req.Body, 4<<20)).Decode(&list); err != nil {
+		ctx.Error(http.StatusBadRequest)
+		return
+	}
+	// Validate every block before replacing the archive; keep descriptors bounded.
+	for _, ref := range list.Blocks {
+		if ref.ID == "" || (ref.XMLName.Local != "Latest" && ref.XMLName.Local != "Uncommitted" && ref.XMLName.Local != "Committed") {
+			ctx.Error(http.StatusBadRequest)
+			return
+		}
+		if _, err := fs.Stat(r.rfs, r.artifactBlockPath(task, artifactName, ref.ID)); err != nil {
+			ctx.Error(http.StatusBadRequest)
+			return
+		}
+	}
+	artifactPath := safeResolve(safeResolve(r.baseDir, fmt.Sprint(task)), artifactName)
+	file, err := r.fs.OpenWritable(safeResolve(artifactPath, artifactName+".zip"))
+	if err != nil {
+		ctx.Error(http.StatusInternalServerError)
+		return
+	}
+	for _, ref := range list.Blocks {
+		block, err := r.rfs.Open(r.artifactBlockPath(task, artifactName, ref.ID))
+		if err != nil {
+			_ = file.Close()
+			ctx.Error(http.StatusInternalServerError)
+			return
+		}
+		_, copyErr := io.Copy(file, block)
+		closeErr := block.Close()
+		if copyErr != nil || closeErr != nil {
+			_ = file.Close()
+			ctx.Error(http.StatusInternalServerError)
+			return
+		}
+	}
+	if err := file.Close(); err != nil {
+		ctx.Error(http.StatusInternalServerError)
+		return
+	}
+	ctx.JSON(http.StatusCreated)
 }
 
 func (r *artifactV4Routes) finalizeArtifact(ctx *ArtifactContext) {
