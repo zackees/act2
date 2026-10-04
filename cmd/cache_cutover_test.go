@@ -41,6 +41,12 @@ func TestCacheCutoverCommandsPreserveFreshServerHitsAndRepositoryIsolation(t *te
 		require.True(t, report.Published)
 		require.EqualValues(t, 80, report.ImportedBytes)
 		require.EqualValues(t, 80, *report.RetainedSourceArchiveBytes)
+		var receipt artifactcache.ImportPublicationReceipt
+		require.NoError(t, json.Unmarshal(runCutoverCommand(t, "cache", "import-receipt",
+			"--cache-server-path", report.Destination), &receipt))
+		require.Equal(t, source, receipt.Source)
+		require.Equal(t, report.Destination, receipt.Destination)
+		require.Equal(t, report.Receipts, receipt.Receipts)
 		after, err := os.ReadFile(filepath.Join(source, "bolt.db"))
 		require.NoError(t, err)
 		require.Equal(t, before, after)
