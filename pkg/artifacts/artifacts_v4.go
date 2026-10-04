@@ -338,26 +338,21 @@ func (r *artifactV4Routes) uploadArtifact(ctx *ArtifactContext) {
 		safePath = safeResolve(safePath, artifactName+".zip")
 
 		file, err := r.fs.OpenAppendable(safePath)
-
 		if err != nil {
-			panic(err)
+			ctx.Error(http.StatusInternalServerError, err)
+			return
 		}
-		defer file.Close()
-
-		writer, ok := file.(io.Writer)
-		if !ok {
-			panic(errors.New("File is not writable"))
-		}
-
 		if ctx.Req.Body == nil {
-			panic(errors.New("No body given"))
+			_ = file.Close()
+			ctx.Error(http.StatusBadRequest, "missing body")
+			return
 		}
-
-		_, err = io.Copy(writer, ctx.Req.Body)
-		if err != nil {
-			panic(err)
+		_, copyErr := io.Copy(file, ctx.Req.Body)
+		closeErr := file.Close()
+		if copyErr != nil || closeErr != nil {
+			ctx.Error(http.StatusInternalServerError, copyErr, closeErr)
+			return
 		}
-		file.Close()
 		ctx.JSON(http.StatusCreated, "appended")
 	case "blocklist":
 		r.commitArtifactBlocks(ctx, task, artifactName)
@@ -426,11 +421,22 @@ type artifactBlockReference struct {
 	ID      string `xml:",chardata"`
 }
 
+func decodeArtifactBlockList(body io.Reader) (artifactBlockList, error) {
+	var list artifactBlockList
+	if err := xml.NewDecoder(io.LimitReader(body, 4<<20)).Decode(&list); err != nil {
+		return list, err
+	}
+	if len(list.Blocks) == 0 {
+		return list, errors.New("empty block list")
+	}
+	return list, nil
+}
+
 func (r *artifactV4Routes) commitArtifactBlocks(ctx *ArtifactContext, task int64, artifactName string) {
 	r.blockState.lifecycle.RLock()
 	defer r.blockState.lifecycle.RUnlock()
-	var list artifactBlockList
-	if err := xml.NewDecoder(io.LimitReader(ctx.Req.Body, 4<<20)).Decode(&list); err != nil {
+	list, err := decodeArtifactBlockList(ctx.Req.Body)
+	if err != nil {
 		ctx.Error(http.StatusBadRequest)
 		return
 	}
