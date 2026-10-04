@@ -151,24 +151,15 @@ func newImmutableHTTP(t *testing.T, fixture immutableFixture) *immutableHTTP {
 // configuration, alternate object store, hooks or HTTP credential environment.
 func serveImmutableUploadPack(t *testing.T, dir string, w http.ResponseWriter, r *http.Request) {
 	t.Helper()
-	// Request values never become command arguments; only cancellation crosses
-	// into the independently constructed child context. Run always joins it.
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	stop := context.AfterFunc(r.Context(), cancel)
-	defer stop()
-	if r.Context().Err() != nil {
-		cancel()
-	}
 	var command *exec.Cmd
 	switch {
 	case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/info/refs") && r.URL.Query().Get("service") == "git-upload-pack":
 		w.Header().Set("Content-Type", "application/x-git-upload-pack-advertisement")
 		_, _ = fmt.Fprint(w, "001e# service=git-upload-pack\n0000")
-		command = exec.CommandContext(ctx, "git", "upload-pack", "--stateless-rpc", "--advertise-refs", ".")
+		command = exec.Command("git", "upload-pack", "--stateless-rpc", "--advertise-refs", ".")
 	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/git-upload-pack"):
 		w.Header().Set("Content-Type", "application/x-git-upload-pack-result")
-		command = exec.CommandContext(ctx, "git", "upload-pack", "--stateless-rpc", ".")
+		command = exec.Command("git", "upload-pack", "--stateless-rpc", ".")
 	default:
 		http.Error(w, "unsupported fixture Git request", http.StatusNotFound)
 		return
@@ -176,7 +167,18 @@ func serveImmutableUploadPack(t *testing.T, dir string, w http.ResponseWriter, r
 	command.Dir = filepath.Join(dir, "fixture.git")
 	command.Env = []string{"PATH=" + os.Getenv("PATH"), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_PROTOCOL=version=0"}
 	command.Stdin, command.Stdout, command.Stderr = r.Body, w, io.Discard
-	if err := command.Run(); err != nil && r.Context().Err() == nil {
+	if r.Context().Err() != nil {
+		return
+	}
+	if err := command.Start(); err != nil {
+		t.Errorf("fixture upload-pack start failed: %v", err)
+		return
+	}
+	// Register after Start so cancellation always sees the child process.
+	// AfterFunc also runs immediately if cancellation raced with Start.
+	stop := context.AfterFunc(r.Context(), func() { _ = command.Process.Kill() })
+	defer stop()
+	if err := command.Wait(); err != nil && r.Context().Err() == nil {
 		t.Errorf("fixture upload-pack failed: %v", err)
 	}
 }
