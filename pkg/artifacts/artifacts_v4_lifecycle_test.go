@@ -165,3 +165,32 @@ func TestV4BlockInitialDownloadLocksPreexistingArchive(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "original", rec.Body.String(), "initial inventory must lease the preexisting archive before opening it")
 }
+
+func TestV4FinalizeWaitsForCompletedArchive(t *testing.T) {
+	route := boundedArtifactRoute(t)
+	route.limits.MaxTotalBytes = 32
+	require.Equal(t, http.StatusCreated, stageTestBlock(t, route, "bundle", "one", "OLD"))
+	commit := httptest.NewRecorder()
+	route.commitArtifactBlocks(&ArtifactContext{Req: httptest.NewRequest(http.MethodPut, "http://localhost/", strings.NewReader(`<BlockList><Latest>one</Latest></BlockList>`)), Resp: commit}, 1, "bundle")
+	require.Equal(t, http.StatusCreated, commit.Code)
+	archive := filepath.Join(route.baseDir, "1", "bundle", "bundle.zip")
+	entry := route.blockState.store.Load().lookup(filepath.Join("1", "bundle", "bundle.zip"))
+	require.NotNil(t, entry)
+	entry.mu.Lock()
+	require.NoError(t, os.WriteFile(archive, []byte("N"), 0600))
+	done := make(chan struct{})
+	rewritten := make(chan error, 1)
+	go func() {
+		select {
+		case <-done:
+		case <-time.After(100 * time.Millisecond):
+		}
+		rewritten <- os.WriteFile(archive, []byte("NEWPAYLOAD"), 0600)
+		entry.mu.Unlock()
+	}()
+	response := httptest.NewRecorder()
+	route.finalizeArtifact(&ArtifactContext{Req: httptest.NewRequest(http.MethodPost, "http://localhost/", strings.NewReader(`{"workflow_run_backend_id":"1","workflow_job_run_backend_id":"1","name":"bundle","size":"10"}`)), Resp: response})
+	close(done)
+	require.NoError(t, <-rewritten)
+	require.Equal(t, http.StatusOK, response.Code, "finalization must validate a completed archive while holding its read lock")
+}

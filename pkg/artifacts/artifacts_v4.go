@@ -522,6 +522,8 @@ func copyArtifactBlock(root *os.Root, relative string, writer io.Writer) error {
 }
 
 func (r *artifactV4Routes) finalizeArtifact(ctx *ArtifactContext) {
+	r.blockState.lifecycle.RLock()
+	defer r.blockState.lifecycle.RUnlock()
 	var req FinalizeArtifactRequest
 
 	if ok := r.parseProtbufBody(ctx, &req); !ok {
@@ -532,6 +534,24 @@ func (r *artifactV4Routes) finalizeArtifact(ctx *ArtifactContext) {
 		return
 	}
 	archivePath := safeResolve(safeResolve(safeResolve(r.baseDir, fmt.Sprint(runID)), req.Name), req.Name+".zip")
+	root, store, err := r.openBlockStore()
+	if err != nil {
+		artifactBlockError(ctx, err)
+		return
+	}
+	defer root.Close()
+	relative, err := filepath.Rel(r.baseDir, archivePath)
+	if err != nil {
+		artifactBlockError(ctx, err)
+		return
+	}
+	entry := store.lookup(relative)
+	if entry == nil {
+		ctx.Error(http.StatusBadRequest, "missing archive")
+		return
+	}
+	entry.mu.RLock()
+	defer entry.mu.RUnlock()
 	archive, err := r.rfs.Open(archivePath)
 	if err != nil {
 		ctx.Error(http.StatusBadRequest, "missing archive")
