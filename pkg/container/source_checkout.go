@@ -161,13 +161,23 @@ func (e *HostEnvironment) validateSourceOwnedTree(destination string) error {
 	if requested != ".." && !strings.HasPrefix(requested, ".."+string(filepath.Separator)) {
 		return fmt.Errorf("source checkout cannot own the requested frozen source")
 	}
-	for _, path := range []string{e.OwnedRoot, destination} {
+	owner, err := filepath.Rel(e.Workdir, e.OwnedRoot)
+	if err != nil {
+		return err
+	}
+	if owner != ".." && !strings.HasPrefix(owner, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("source checkout owned root cannot be inside frozen source")
+	}
+	// Resolve every root, including requested source, before receiver admission
+	// or deletion. Lexical separation alone does not reject a source alias into
+	// the owned workspace. The controller retains exclusive frozen/owned roots.
+	for _, path := range []string{e.OwnedRoot, destination, e.Workdir} {
 		info, err := os.Lstat(path)
 		if err != nil {
 			return err
 		}
 		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("source checkout requires real owned directories")
+			return fmt.Errorf("source checkout requires real independent directories")
 		}
 		resolved, err := filepath.EvalSymlinks(path)
 		if err != nil {
@@ -178,7 +188,7 @@ func (e *HostEnvironment) validateSourceOwnedTree(destination string) error {
 			return err
 		}
 		if resolved != absolute {
-			return fmt.Errorf("source checkout owned path has an alias")
+			return fmt.Errorf("source checkout path has an alias")
 		}
 	}
 	return nil
