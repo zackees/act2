@@ -617,10 +617,13 @@ func (r *artifactV4Routes) downloadArtifact(ctx *ArtifactContext) {
 			artifactBlockError(ctx, err)
 			return
 		}
-		if entry := store.lookup(relative); entry != nil {
-			entry.mu.RLock()
-			defer entry.mu.RUnlock()
+		entry := store.lookup(relative)
+		if entry == nil {
+			ctx.Error(http.StatusNotFound)
+			return
 		}
+		entry.mu.RLock()
+		defer entry.mu.RUnlock()
 	}
 	file, err := r.rfs.Open(safePath)
 	if err != nil {

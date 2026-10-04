@@ -103,3 +103,33 @@ func TestV4BlockDownloadClosesFileBeforeDeletion(t *testing.T) {
 	require.Equal(t, "payload", rec.Body.String())
 	require.True(t, tracked.closed, "a completed download must release its file before deletion can reclaim storage")
 }
+
+// Open runs the first commit exactly after download's archive lookup. A missing
+// entry must reject the request before filesystem access can race that commit.
+type firstCommitArtifactFS struct {
+	open func(string) (fs.File, error)
+}
+
+func (fsys firstCommitArtifactFS) Open(name string) (fs.File, error) { return fsys.open(name) }
+
+func TestV4BlockDownloadRejectsMissingEntryBeforeFirstCommit(t *testing.T) {
+	route := boundedArtifactRoute(t)
+	route.limits.MaxTotalBytes = 32
+	require.Equal(t, http.StatusCreated, stageTestBlock(t, route, "bundle", "one", "payload"))
+	route.AppURL = "localhost"
+	route.prefix = ArtifactV4RouteBase
+	opened := false
+	route.rfs = firstCommitArtifactFS{open: func(name string) (fs.File, error) {
+		opened = true
+		req := httptest.NewRequest(http.MethodPut, "http://localhost/", strings.NewReader(`<BlockList><Latest>one</Latest></BlockList>`))
+		rec := httptest.NewRecorder()
+		route.commitArtifactBlocks(&ArtifactContext{Req: req, Resp: rec}, 1, "bundle")
+		require.Equal(t, http.StatusCreated, rec.Code)
+		return os.Open(name)
+	}}
+	req := httptest.NewRequest(http.MethodGet, route.buildArtifactURL("DownloadArtifact", "bundle", 1), nil)
+	rec := httptest.NewRecorder()
+	route.downloadArtifact(&ArtifactContext{Req: req, Resp: rec})
+	require.Equal(t, http.StatusNotFound, rec.Code)
+	require.False(t, opened, "a lookup miss must not open an archive created by a racing first commit")
+}
