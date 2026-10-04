@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -72,4 +73,13 @@ func TestToolGenerationRejectsUnexpectedExistingPayload(t *testing.T) {
 	actual, err := os.ReadFile(foreign)
 	require.NoError(t, err)
 	require.Equal(t, "keep", string(actual))
+}
+
+func TestToolGenerationProvidesReaderLeaseBeforePublicationSuccess(t *testing.T) {
+	store, spec := toolGenerationFixture(t)
+	generation := PublishToolGeneration(context.Background(), store, spec, 100)
+	require.False(t, generation.Partial, generation.Error)
+	reader, err := openTransferLease(filepath.Join(generation.Destination, ".readers-v1.bolt"), true, 100*time.Millisecond)
+	require.NoError(t, err, "a published generation must already provide reader coordination")
+	require.NoError(t, reader.Close())
 }

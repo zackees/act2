@@ -66,6 +66,15 @@ func publishToolGeneration(ctx context.Context, root string, spec ToolGeneration
 			report.fail(err)
 			return report
 		}
+		reader, err := openTransferLease(filepath.Join(report.Destination, toolGenerationReaderLock), true, 100*time.Millisecond)
+		if err != nil {
+			report.fail(err)
+			return report
+		}
+		if err := reader.Close(); err != nil {
+			report.fail(err)
+			return report
+		}
 		report.Published, report.Reused = true, true
 		if err := syncToolDirectory(generations); err != nil {
 			report.fail(err)
@@ -117,6 +126,7 @@ func validateToolGenerationSpec(root string, spec ToolGenerationSpec, maxBytes i
 	if err != nil || resolved != root {
 		return nil, fmt.Errorf("tool generation store has missing or aliased ancestry")
 	}
+	// #nosec G703 -- Root is explicitly caller-selected and checked for canonical nonsymlink ancestry above.
 	info, err := os.Lstat(root)
 	if err != nil || !info.IsDir() {
 		return nil, fmt.Errorf("tool generation store is not a directory")

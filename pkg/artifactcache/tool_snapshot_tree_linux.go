@@ -79,6 +79,7 @@ func walkToolTree(ctx context.Context, path string, depth int, visit func(string
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	// #nosec G703 -- Bounded traversal starts at a verified root and joins only filesystem entry names.
 	info, err := os.Lstat(path)
 	if err != nil {
 		return err
@@ -92,6 +93,7 @@ func walkToolTree(ctx context.Context, path string, depth int, visit func(string
 	if depth >= 64 {
 		return fmt.Errorf("tool inventory depth limit exceeded")
 	}
+	// #nosec G703 -- The traversal just verified this nonsymlink directory; source writers must be excluded.
 	dir, err := os.Open(path)
 	if err != nil {
 		return err

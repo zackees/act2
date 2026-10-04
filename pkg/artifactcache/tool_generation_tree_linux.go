@@ -70,15 +70,18 @@ func syntheticToolEntry(path, kind string) toolEntry {
 
 func loadToolGenerationObject(ctx context.Context, object, id string, maxBytes int64) (toolManifest, error) {
 	var manifest toolManifest
+	// #nosec G703 -- Object path is built from a validated canonical store and manifest SHA-256 ID.
 	info, err := os.Lstat(object)
 	if err != nil || !info.IsDir() {
 		return manifest, fmt.Errorf("tool generation object is missing or not closed")
 	}
 	path := filepath.Join(object, "manifest.json")
+	// #nosec G703 -- Fixed manifest leaf under the verified nonsymlink generation directory.
 	info, err = os.Lstat(path)
 	if err != nil || !info.Mode().IsRegular() || info.Size() > toolManifestLimit {
 		return manifest, fmt.Errorf("tool generation object manifest is invalid")
 	}
+	// #nosec G703 -- Fixed bounded regular manifest under the verified generation directory.
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return manifest, err
@@ -146,6 +149,9 @@ func fillToolGeneration(ctx context.Context, root, stage string, manifest toolGe
 	if closeErr != nil {
 		return closeErr
 	}
+	if err := initializeToolGenerationReaderLock(stage); err != nil {
+		return err
+	}
 	return syncToolDirectory(stage)
 }
 
@@ -186,15 +192,18 @@ func linkToolGenerationEntry(root, tree string, installs []ToolGenerationInstall
 }
 
 func verifyToolGeneration(ctx context.Context, object string, expected []byte, tree toolManifest, maxBytes int64) error {
+	// #nosec G703 -- Fixed bounded manifest paths derive from a validated canonical store and SHA-256 generation ID.
 	info, err := os.Lstat(object)
 	if err != nil || !info.IsDir() {
 		return fmt.Errorf("tool generation is not a closed directory")
 	}
 	path := filepath.Join(object, "manifest.json")
+	// #nosec G703 -- Fixed bounded manifest paths derive from a validated canonical store and SHA-256 generation ID.
 	info, err = os.Lstat(path)
 	if err != nil || !info.Mode().IsRegular() || info.Size() > toolManifestLimit {
 		return fmt.Errorf("tool generation manifest is invalid")
 	}
+	// #nosec G703 -- Fixed bounded manifest paths derive from a validated canonical store and SHA-256 generation ID.
 	data, err := os.ReadFile(path)
 	if err != nil || !bytes.Equal(data, expected) {
 		return fmt.Errorf("tool generation manifest differs; existing generation preserved")

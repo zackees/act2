@@ -176,13 +176,21 @@ func prepareToolSnapshotStore(root string) (transferLease, error) {
 		return nil, err
 	}
 	marker := filepath.Join(root, toolStoreMarker)
-	if _, err := os.Lstat(marker); os.IsNotExist(err) {
+	_, markerErr := os.Lstat(marker)
+	if markerErr != nil && !os.IsNotExist(markerErr) {
+		return nil, markerErr
+	}
+	recognized := markerErr == nil
+	if !recognized {
 		if err := verifyToolStoreInitialContents(root); err != nil {
 			return nil, err
 		}
 	}
 	lockPath := filepath.Join(root, toolStoreLock)
 	if _, err := os.Lstat(lockPath); os.IsNotExist(err) {
+		if recognized {
+			return nil, fmt.Errorf("established tool store is missing catalog coordination")
+		}
 		// Initialization creates the coordination database. Later opens use the
 		// existing read-only descriptor and cannot silently recreate it.
 		db, err := bbolt.Open(lockPath, 0600, &bbolt.Options{Timeout: 100 * time.Millisecond})
@@ -205,6 +213,16 @@ func prepareToolSnapshotStore(root string) (transferLease, error) {
 		return nil, err
 	}
 	return lease, nil
+}
+
+// Admission never initializes a store. Missing coordination in an established
+// store requires explicit recovery, not a replacement mutex inode.
+func prepareExistingToolSnapshotStore(root string) (transferLease, error) {
+	info, err := os.Lstat(filepath.Join(root, toolStoreMarker))
+	if err != nil || !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("tool generation admission requires an established store")
+	}
+	return prepareToolSnapshotStore(root)
 }
 
 func verifyToolStoreInitialContents(root string) error {
