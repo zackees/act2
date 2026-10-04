@@ -96,12 +96,12 @@ type immutableRequest struct {
 }
 
 type immutableHTTP struct {
-	server          *httptest.Server
-	mu              sync.Mutex
-	requests        int
-	uploads         []immutableRequest
-	rejectShallow   bool
-	status          int
+	server        *httptest.Server
+	mu            sync.Mutex
+	requests      int
+	uploads       []immutableRequest
+	rejectShallow bool
+	status        int
 }
 
 func newImmutableHTTP(t *testing.T, fixture immutableFixture) *immutableHTTP {
@@ -109,7 +109,7 @@ func newImmutableHTTP(t *testing.T, fixture immutableFixture) *immutableHTTP {
 	gitPath, err := exec.LookPath("git")
 	require.NoError(t, err)
 	backend := &cgi.Handler{Path: gitPath, Args: []string{"http-backend"}, Root: "/git", Dir: fixture.dir,
-		Env: []string{"GIT_PROJECT_ROOT=" + fixture.dir, "GIT_HTTP_EXPORT_ALL=1", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null"},
+		Env:    []string{"GIT_PROJECT_ROOT=" + fixture.dir, "GIT_HTTP_EXPORT_ALL=1", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null"},
 		Stderr: io.Discard,
 	}
 	state := &immutableHTTP{}

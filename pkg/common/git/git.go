@@ -336,6 +336,9 @@ func NewGitCloneExecutor(input NewGitCloneExecutorInput) common.Executor {
 			return err
 		}
 		defer cloneLock.Unlock()
+		if isImmutableGitPin(input.Ref) {
+			return acquireImmutableGitPin(ctx, input)
+		}
 
 		refName := plumbing.ReferenceName(fmt.Sprintf("refs/heads/%s", input.Ref))
 		r, err := CloneIfRequired(ctx, refName, input, logger)
