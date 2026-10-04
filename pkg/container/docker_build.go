@@ -62,7 +62,7 @@ func NewDockerBuildExecutor(input NewDockerBuildExecutorInput) common.Executor {
 		}
 		var buildContext io.ReadCloser
 		if input.BuildContext != nil {
-			buildContext = io.NopCloser(input.BuildContext)
+			buildContext, err = interruptibleBuildInput(input.BuildContext)
 		} else {
 			buildContext, err = createBuildContext(ctx, input.ContextDir, input.Dockerfile)
 		}

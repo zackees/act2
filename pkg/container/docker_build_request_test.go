@@ -3,7 +3,10 @@
 package container
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -38,6 +41,9 @@ func TestDockerBuildPlatformRequest(t *testing.T) {
 					infoCalls.Add(1)
 					w.WriteHeader(test.infoStatus)
 					_, _ = io.WriteString(w, test.info)
+				case strings.HasSuffix(r.URL.Path, "/images/test-output/json"):
+					parts := strings.Split(test.want, "/")
+					_ = json.NewEncoder(w).Encode(struct{ Os, Architecture string }{parts[0], parts[1]})
 				case strings.HasSuffix(r.URL.Path, "/build"):
 					buildCalls.Add(1)
 					assert.Equal(t, test.want, r.URL.Query().Get("platform"))
@@ -57,7 +63,14 @@ func TestDockerBuildPlatformRequest(t *testing.T) {
 			t.Setenv("DOCKER_API_VERSION", "")
 			t.Setenv("DOCKER_TLS_VERIFY", "")
 			t.Setenv("DOCKER_CERT_PATH", "")
-			err := NewDockerBuildExecutor(NewDockerBuildExecutorInput{BuildContext: strings.NewReader("context"), Dockerfile: "Dockerfile.custom", ImageTag: "test-output", Platform: test.requested})(context.Background())
+			var body bytes.Buffer
+			writer := tar.NewWriter(&body)
+			dockerfile := "FROM scratch\n"
+			require.NoError(t, writer.WriteHeader(&tar.Header{Name: "Dockerfile.custom", Mode: 0644, Size: int64(len(dockerfile))}))
+			_, writeErr := io.WriteString(writer, dockerfile)
+			require.NoError(t, writeErr)
+			require.NoError(t, writer.Close())
+			err := NewDockerBuildExecutor(NewDockerBuildExecutorInput{BuildContext: bytes.NewReader(body.Bytes()), Dockerfile: "Dockerfile.custom", ImageTag: "test-output", Platform: test.requested})(context.Background())
 			if test.wantError {
 				require.ErrorContains(t, err, "daemon info unavailable")
 				require.Zero(t, buildCalls.Load())
