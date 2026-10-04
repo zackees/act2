@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/nektos/act/pkg/artifactcache"
+	"github.com/nektos/act/pkg/common"
 	"github.com/stretchr/testify/require"
 )
 
@@ -101,3 +102,25 @@ func TestCohortWatchResumesAfterActiveServerReleasesLease(t *testing.T) {
 type reportCallback struct{ after func([]byte) }
 
 func (w *reportCallback) Write(p []byte) (int, error) { w.after(p); return len(p), nil }
+
+func TestCohortWatchStopsOnFirstGracefulInterrupt(t *testing.T) {
+	force, forceCancel := context.WithCancel(context.Background())
+	defer forceCancel()
+	job, jobCancel := context.WithCancel(force)
+	defer jobCancel()
+	ctx := common.WithJobCancelContext(force, job)
+	root := createRootCommand(ctx, &Input{}, "test")
+	root.SetOut(&reportCallback{after: func([]byte) { jobCancel() }})
+	root.SetArgs([]string{"cache", "prune-cohort", "--apply", "--watch", "1h", "--cache-server-path", filepath.Join(t.TempDir(), "missing")})
+	done := make(chan error, 1)
+	go func() { done <- root.Execute() }()
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+		require.NoError(t, force.Err(), "first interrupt must not require force cancellation")
+	case <-time.After(time.Second):
+		forceCancel()
+		<-done
+		t.Fatal("watcher ignored graceful job cancellation")
+	}
+}

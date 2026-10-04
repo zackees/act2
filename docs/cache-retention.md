@@ -268,3 +268,9 @@ used warm archive. A fresh server then serves that key and its exact bytes via
 real loopback HTTP lookup/download. This passes under the race detector and
 pinned lint. It proves idle archive convergence independently of shutdown
 retention; it does not simulate SIGKILL or Bosn process supervision.
+
+The CLI watcher now uses the existing EarlyCancelContext bridge so the first
+Ctrl+C (graceful job cancellation) stops maintenance, as does SIGTERM/forced
+cancellation. A focused RED test originally remained running until force
+cancellation; GREEN stops after the separate job context is canceled while
+the force context stays live. The focused CLI race suite and lint pass.
