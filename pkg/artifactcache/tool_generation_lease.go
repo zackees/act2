@@ -8,8 +8,10 @@ import "context"
 // holder alive as long as the engine, including uncertain cleanup states.
 type ToolGenerationLease interface{ Close() error }
 
-// AcquireToolGenerationLease validates and locks a published generation while
-// the catalog writer lock prevents coordinated retirement or admission races.
+// AcquireToolGenerationLease acquires the original reader under catalog writer
+// exclusion, then validates payload with that reader protecting the generation.
+// Expensive hashing does not hold the catalog mutex. Failed validation releases
+// the reader and never admits unverified payload.
 func AcquireToolGenerationLease(ctx context.Context, root, id string, maxBytes int64) (ToolGenerationLease, error) {
 	return acquireToolGenerationLease(ctx, root, id, maxBytes)
 }
