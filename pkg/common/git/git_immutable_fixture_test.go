@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/http/cgi"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -108,10 +107,6 @@ func newImmutableHTTP(t *testing.T, fixture immutableFixture) *immutableHTTP {
 	t.Helper()
 	gitPath, err := exec.LookPath("git")
 	require.NoError(t, err)
-	backend := &cgi.Handler{Path: gitPath, Args: []string{"http-backend"}, Root: "/git", Dir: fixture.dir,
-		Env:    []string{"GIT_PROJECT_ROOT=" + fixture.dir, "GIT_HTTP_EXPORT_ALL=1", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null"},
-		Stderr: io.Discard,
-	}
 	state := &immutableHTTP{}
 	state.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		state.mu.Lock()
@@ -144,10 +139,37 @@ func newImmutableHTTP(t *testing.T, fixture immutableFixture) *immutableHTTP {
 			}
 			r.Body = io.NopCloser(bytes.NewReader(body))
 		}
-		backend.ServeHTTP(w, r)
+		serveImmutableUploadPack(t, gitPath, fixture.dir, w, r)
 	}))
 	t.Cleanup(state.server.Close)
 	return state
+}
+
+// Stream the real Git smart-HTTP protocol directly, without CGI or a shell.
+// The command runs only in the isolated fixture runner, with no inherited Git
+// configuration, alternate object store, hooks or HTTP credential environment.
+func serveImmutableUploadPack(t *testing.T, gitPath, dir string, w http.ResponseWriter, r *http.Request) {
+	t.Helper()
+	args := []string{"upload-pack", "--stateless-rpc"}
+	switch {
+	case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/info/refs") && r.URL.Query().Get("service") == "git-upload-pack":
+		w.Header().Set("Content-Type", "application/x-git-upload-pack-advertisement")
+		_, _ = fmt.Fprint(w, "001e# service=git-upload-pack\n0000")
+		args = append(args, "--advertise-refs")
+	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/git-upload-pack"):
+		w.Header().Set("Content-Type", "application/x-git-upload-pack-result")
+	default:
+		http.Error(w, "unsupported fixture Git request", http.StatusNotFound)
+		return
+	}
+	args = append(args, filepath.Join(dir, "fixture.git"))
+	command := exec.CommandContext(r.Context(), gitPath, args...)
+	command.Dir = dir
+	command.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + dir, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_PROTOCOL=version=0"}
+	command.Stdin, command.Stdout, command.Stderr = r.Body, w, io.Discard
+	if err := command.Run(); err != nil && r.Context().Err() == nil {
+		t.Errorf("fixture upload-pack failed: %v", err)
+	}
 }
 
 func (state *immutableHTTP) url() string { return state.server.URL + "/git/fixture.git" }
