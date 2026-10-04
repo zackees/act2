@@ -52,7 +52,7 @@ func newCacheCommand(ctx context.Context, input *Input) *cobra.Command {
 	cohort.Flags().Int64Var(&cohortMax, "max-bytes", 0, "Aggregate completed archive ceiling across the cohort; 0 disables it")
 	cohort.Flags().DurationVar(&cohortWatch, "watch", 0, "Retry aggregate maintenance periodically, including incomplete or busy passes; emits one JSON report per pass")
 	cohort.Flags().BoolVar(&cohortApply, "apply", false, "Apply age, namespace and aggregate retention to this cohort")
-	cache.AddCommand(audit, prune, cohort, newCacheImportCommand(ctx, input))
+	cache.AddCommand(audit, prune, cohort, newCacheImportCommand(ctx, input), newCacheImportReceiptCommand(input))
 	return cache
 }
 
@@ -90,4 +90,15 @@ func newCacheImportCommand(ctx context.Context, input *Input) *cobra.Command {
 	command.Flags().BoolVar(&apply, "apply", false, "Copy, validate and atomically publish the new namespace")
 	command.Flags().BoolVar(&quiescent, "source-quiescent", false, "Confirm legacy servers are stopped; metadata locking can block their requests")
 	return command
+}
+
+func newCacheImportReceiptCommand(input *Input) *cobra.Command {
+	return &cobra.Command{Use: "import-receipt", Short: "Read historical import publication evidence without modifying the namespace", Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			receipt, err := artifactcache.ReadImportPublicationReceipt(input.cacheServerPath)
+			if err != nil {
+				return err
+			}
+			return json.NewEncoder(cmd.OutOrStdout()).Encode(receipt)
+		}}
 }

@@ -105,7 +105,7 @@ func TestImportChangedArchiveNeverPublishesAndCleansStage(t *testing.T) {
 	require.NoError(t, os.WriteFile(source.storage.filename(1), []byte("changed"), 0o600))
 	root := t.TempDir()
 	report := ImportReport{Source: source.dir, Destination: filepath.Join(root, "repo")}
-	err = publishImport(context.Background(), source, db, inventory.Fingerprint, root, []*Cache{cache}, &report)
+	err = publishImport(context.Background(), source, db, inventory.Fingerprint, root, 80, []*Cache{cache}, &report)
 	require.ErrorContains(t, err, "length")
 	require.False(t, report.Published)
 	require.Empty(t, report.PendingStage)
@@ -155,4 +155,14 @@ func TestImportAllowsGenuinelyEmptySource(t *testing.T) {
 	require.True(t, report.Published)
 	require.Zero(t, report.ImportedCount)
 	require.Zero(t, report.SkippedBudget)
+}
+
+func TestImportPublishesRecoveryReceiptWithNamespace(t *testing.T) {
+	source := seedLegacyImportStore(t, 2)
+	root := t.TempDir()
+	report := ImportCompleted(context.Background(), source.dir, root, "repo", 80)
+	require.False(t, report.Partial, report.Error)
+	data, err := os.ReadFile(filepath.Join(report.Destination, "import-receipt-v1.json"))
+	require.NoError(t, err, "a lost stdout acknowledgement needs evidence in the published namespace")
+	require.NotEmpty(t, data)
 }
