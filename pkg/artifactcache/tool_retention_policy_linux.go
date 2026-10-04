@@ -74,12 +74,7 @@ func retainToolStore(ctx context.Context, root string, policy ToolRetentionPolic
 		return report
 	}
 	report = expireToolRecoveryPinsLocked(ctx, catalog, root, now, records, policy.MaxCandidates, report)
-	if report.ExpiredPins > 0 || report.Partial {
-		report.After = auditToolStoreUsageLocked(ctx, root, policy.MaxEntries)
-		if report.After.Partial {
-			report.fail(fmt.Errorf("post-expiry inventory incomplete: %s", report.After.Error))
-		}
-	}
+	report = auditToolRecoveryPinExpiry(ctx, root, policy.MaxEntries, report)
 	if report.Partial {
 		return report
 	}
@@ -172,4 +167,14 @@ func toolRetentionCandidatesAt(directory string, bound int) ([]toolRetentionCand
 		return candidates[i].published.Before(candidates[j].published)
 	})
 	return candidates, nil
+}
+
+func auditToolRecoveryPinExpiry(ctx context.Context, root string, maxEntries int, report ToolRetentionReport) ToolRetentionReport {
+	if report.ExpiredPins > 0 || report.Partial {
+		report.After = auditToolStoreUsageLocked(ctx, root, maxEntries)
+		if report.After.Partial {
+			report.fail(fmt.Errorf("post-expiry inventory incomplete: %s", report.After.Error))
+		}
+	}
+	return report
 }

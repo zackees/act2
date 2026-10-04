@@ -5,11 +5,12 @@ package artifactcache
 import (
 	"context"
 	"errors"
-	"github.com/stretchr/testify/require"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestToolRecoveryPinPublicationIsImmutableAndRetryable(t *testing.T) {

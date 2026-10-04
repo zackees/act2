@@ -96,6 +96,10 @@ func publishToolRecoveryPinWithValidation(ctx context.Context, root string, pin 
 		report.fail(fmt.Errorf("recovery pin expired during validation"))
 		return report
 	}
+	return publishVerifiedToolRecoveryPin(ctx, catalog, root, pin, now, syncParent, report)
+}
+
+func publishVerifiedToolRecoveryPin(ctx context.Context, catalog transferLease, root string, pin ToolRecoveryPin, now time.Time, syncParent func(string) error, report ToolRecoveryPinReport) ToolRecoveryPinReport {
 	records, err := readToolRecoveryPinRecords(ctx, root, now)
 	if err != nil {
 		report.fail(err)
@@ -133,29 +137,15 @@ func publishToolRecoveryPinWithValidation(ctx context.Context, root string, pin 
 		report.fail(err)
 		return report
 	}
-	if _, err := os.Lstat(directory); os.IsNotExist(err) {
-		if err := os.Mkdir(directory, 0700); err != nil {
-			report.fail(err)
-			return report
-		}
-		if err := syncParent(root); err != nil {
-			report.fail(err)
-			return report
-		}
-	} else if err != nil {
+	if err := prepareToolRecoveryPinDirectory(root, directory, syncParent); err != nil {
 		report.fail(err)
 		return report
 	}
-	rootMount, err := toolMountID(root)
-	if err != nil {
-		report.fail(err)
-		return report
-	}
-	pinMount, err := toolMountID(directory)
-	if err != nil || rootMount != pinMount {
-		report.fail(fmt.Errorf("recovery pin namespace crosses mount boundary"))
-		return report
-	}
+	return linkToolRecoveryPin(ctx, catalog, root, directory, pin, encoded, syncParent, report)
+}
+
+func linkToolRecoveryPin(ctx context.Context, catalog transferLease, root, directory string, pin ToolRecoveryPin, encoded []byte, syncParent func(string) error, initial ToolRecoveryPinReport) (report ToolRecoveryPinReport) {
+	report = initial
 	stage, err := createOwnedToolStage(catalog, root, root, ".tool-stage-")
 	report.PendingStage = stage
 	if err != nil {
@@ -203,4 +193,26 @@ func publishToolRecoveryPinWithValidation(ctx context.Context, root string, pin 
 		report.fail(err)
 	}
 	return report
+}
+
+func prepareToolRecoveryPinDirectory(root, directory string, syncParent func(string) error) error {
+	if _, err := os.Lstat(directory); os.IsNotExist(err) {
+		if err := os.Mkdir(directory, 0700); err != nil {
+			return err
+		}
+		if err := syncParent(root); err != nil {
+			return err
+		}
+	} else if err != nil {
+		return err
+	}
+	rootMount, err := toolMountID(root)
+	if err != nil {
+		return err
+	}
+	pinMount, err := toolMountID(directory)
+	if err != nil || rootMount != pinMount {
+		return fmt.Errorf("recovery pin namespace crosses mount boundary")
+	}
+	return nil
 }
