@@ -55,12 +55,7 @@ func (transfer *hostDockerTransfer) restore(action container.Container) common.E
 		if !transfer.staged {
 			return nil
 		}
-		for _, path := range transfer.paths {
-			if err := copyHostDockerArchive(ctx, action, transfer.host, path.action, path.host); err != nil {
-				return fmt.Errorf("restore host Docker action files: %w", err)
-			}
-		}
-		return nil
+		return restoreHostDockerFiles(ctx, action, transfer.paths)
 	}
 }
 func hostDockerEnv(rc *RunContext, key, value string) string {
