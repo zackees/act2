@@ -132,7 +132,7 @@ func TestGitImmutableOriginMismatchNeverReusesPin(t *testing.T) {
 	input.URL = second.url()
 	require.Error(t, NewGitCloneExecutor(input)(context.Background()), "same commit bytes from another origin do not authorize a hit")
 	requests, _ := second.snapshot()
-	require.Equal(t, 1, requests)
+	require.Zero(t, requests, "a different origin must not authorize reuse or broad fallback")
 }
 
 func TestGitImmutableCorruptCommitDoesNotFallback(t *testing.T) {
