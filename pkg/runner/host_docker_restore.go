@@ -19,9 +19,35 @@ import (
 )
 
 // Restoration is local resource policy: at most 1 GiB and 100,000 entries per
-// owned root. All archives are staged and validated before either root changes.
+// owned root. Extended metadata is capped at 1 MiB per header and 16 MiB
+// total, with at most 100,000 raw headers including metadata. All archives
+// are staged and validated before either root changes.
 const hostRestoreBytes int64 = 1 << 30
 const hostRestoreEntries = 100000
+
+type hostArchiveLimits struct {
+	bytes         int64
+	metadataBytes int64
+	metadataTotal int64
+	headers       int
+}
+
+func (plan *hostRestorePlan) restoreArchiveLimits() hostArchiveLimits {
+	limits := plan.archiveLimits
+	if limits.bytes == 0 {
+		limits.bytes = hostRestoreBytes + hostRestoreEntries*1024
+	}
+	if limits.metadataBytes == 0 {
+		limits.metadataBytes = 1 << 20
+	}
+	if limits.metadataTotal == 0 {
+		limits.metadataTotal = 16 << 20
+	}
+	if limits.headers == 0 {
+		limits.headers = hostRestoreEntries
+	}
+	return limits
+}
 
 type hostRestoreEntry struct {
 	path string
@@ -45,6 +71,7 @@ type hostRestoreMutation struct {
 	oldMode      fs.FileMode
 }
 type hostRestorePlan struct {
+	archiveLimits    hostArchiveLimits
 	root             *os.Root
 	scratch          string
 	originalTime     time.Time
@@ -113,7 +140,8 @@ func restoreRelative(name string) (string, error) {
 }
 func (plan *hostRestorePlan) stage(ctx context.Context, archive io.Reader) error {
 	plan.directories = map[string]hostRestoreDirectory{}
-	reader := tar.NewReader(io.LimitReader(archive, hostRestoreBytes+hostRestoreEntries*1024))
+	stream := &hostArchiveReader{source: archive, limits: plan.restoreArchiveLimits()}
+	reader := tar.NewReader(stream)
 	total := int64(0)
 	for count := 0; ; count++ {
 		if err := ctx.Err(); err != nil {
@@ -125,6 +153,9 @@ func (plan *hostRestorePlan) stage(ctx context.Context, archive io.Reader) error
 		}
 		if err != nil {
 			return err
+		}
+		if header.Size != stream.headerSize {
+			return errors.New("Docker archive extended size disagrees with its framing")
 		}
 		if count >= hostRestoreEntries {
 			return errors.New("Docker archive entry limit exceeded")
@@ -146,6 +177,9 @@ func (plan *hostRestorePlan) stage(ctx context.Context, archive io.Reader) error
 		if err = plan.stageEntry(reader, header, relative, target, &total); err != nil {
 			return err
 		}
+	}
+	if err := stream.finish(); err != nil {
+		return err
 	}
 	if err := plan.validateStageLinks(); err != nil {
 		return err
