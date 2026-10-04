@@ -100,7 +100,14 @@ func (reader *hostArchiveReader) validateBlock() error {
 	if size > reader.limits.bytes {
 		return errors.New("Docker archive raw byte limit exceeded")
 	}
-	reader.headerSize = size
+	switch reader.block[156] {
+ case tar.TypeReg, tar.TypeRegA, tar.TypeXHeader, tar.TypeXGlobalHeader, tar.TypeGNULongName, tar.TypeGNULongLink:
+ case tar.TypeDir, tar.TypeSymlink, tar.TypeLink, tar.TypeChar, tar.TypeBlock, tar.TypeFifo:
+  if size != 0 { return errors.New("bodyless Docker archive entry has nonzero size") }
+ default:
+  return errors.New("unsupported or sparse Docker archive entry")
+ }
+ reader.headerSize = size
 	reader.body = (size + 511) / 512 * 512
 	switch reader.block[156] {
 	case tar.TypeXHeader, tar.TypeXGlobalHeader, tar.TypeGNULongName, tar.TypeGNULongLink:
