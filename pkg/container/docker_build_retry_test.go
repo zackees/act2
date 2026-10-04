@@ -24,6 +24,7 @@ func TestDockerBuildPlatformRepair(t *testing.T) {
   inspectStatus, retryStatus, wantBuilds int
   wantError bool
  }{
+  {"initial-error", "FROM ubuntu:18.04\n", "amd64", "amd64", 200, 200, 1, true},
   {"mismatched-cache", "FROM ubuntu:18.04\n", "arm64", "amd64", 200, 200, 2, false},
   {"matching-local-offline", "FROM local-only:latest\n", "amd64", "amd64", 200, 200, 1, false},
   {"retry-still-wrong", "FROM ubuntu:18.04\n", "arm64", "arm64", 200, 200, 2, true},
@@ -54,8 +55,8 @@ func TestDockerBuildPlatformRepair(t *testing.T) {
      pulls = append(pulls, r.URL.Query().Get("pull"))
      assert.Equal(t, "linux/amd64", r.URL.Query().Get("platform"))
      assert.Empty(t, r.URL.Query().Get("version"), "same classic backend")
-     if len(contexts) == 2 && test.retryStatus != 200 {
-      w.WriteHeader(test.retryStatus)
+     if test.name == "initial-error" || (len(contexts) == 2 && test.retryStatus != 200) {
+      w.WriteHeader(500)
       _, _ = io.WriteString(w, `{"message":"forced pull failed"}`)
       return
      }

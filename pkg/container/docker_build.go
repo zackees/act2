@@ -73,13 +73,7 @@ func NewDockerBuildExecutor(input NewDockerBuildExecutorInput) common.Executor {
 		defer buildContext.Close()
 
 		logger.Debugf("Creating image from context dir '%s' with tag '%s' and platform '%s'", input.ContextDir, input.ImageTag, input.Platform)
-		resp, err := cli.ImageBuild(ctx, buildContext, options)
-
-		err = logDockerResponse(logger, resp.Body, err != nil)
-		if err != nil {
-			return err
-		}
-		return nil
+		return buildWithPlatformRecovery(ctx, cli, buildContext, options, input.ImageTag)
 	}
 }
 func createBuildContext(ctx context.Context, contextDir string, relDockerfile string) (io.ReadCloser, error) {
