@@ -16,6 +16,7 @@ import (
 	"time"
 
 	gogit "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/filemode"
 	"github.com/go-git/go-git/v5/plumbing/format/index"
@@ -173,5 +174,23 @@ func requireImmutableCheckout(t *testing.T, dir string, hash plumbing.Hash, cont
 	data, err := os.ReadFile(filepath.Join(dir, "action.yml"))
 	require.NoError(t, err)
 	require.Equal(t, contents, string(data))
+	return repo
+}
+
+func seedImmutableLooseCheckout(t *testing.T, fixture immutableFixture, dir, url string, pin plumbing.Hash) *gogit.Repository {
+	t.Helper()
+	repo, err := gogit.PlainInit(dir, false)
+	require.NoError(t, err)
+	objects, err := fixture.repo.Storer.IterEncodedObjects(plumbing.AnyObject)
+	require.NoError(t, err)
+	require.NoError(t, objects.ForEach(func(obj plumbing.EncodedObject) error {
+		_, copyErr := repo.Storer.SetEncodedObject(obj)
+		return copyErr
+	}))
+	_, err = repo.CreateRemote(&config.RemoteConfig{Name: "origin", URLs: []string{url}})
+	require.NoError(t, err)
+	worktree, err := repo.Worktree()
+	require.NoError(t, err)
+	require.NoError(t, worktree.Checkout(&gogit.CheckoutOptions{Hash: pin}))
 	return repo
 }

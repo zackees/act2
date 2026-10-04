@@ -141,18 +141,18 @@ func TestGitImmutableCorruptCommitDoesNotFallback(t *testing.T) {
 	// Seed a local loose-object checkout independently of the executor so the
 	// corruption targets a known commit object rather than a production cache layout.
 	dir := filepath.Join(immutableFixtureDirectory(t), "checkout")
-	repo, err := gogit.PlainClone(dir, false, &gogit.CloneOptions{URL: filepath.Join(fixture.dir, "fixture.git")})
-	require.NoError(t, err)
-	config, err := repo.Config()
-	require.NoError(t, err)
-	config.Remotes["origin"].URLs = []string{server.url()}
-	require.NoError(t, repo.SetConfig(config))
+	seedImmutableLooseCheckout(t, fixture, dir, server.url(), fixture.commits[7])
 	pin := fixture.commits[7].String()
 	objectPath := filepath.Join(dir, ".git", "objects", pin[:2], pin[2:])
-	// Local clone can pack objects; write a corrupt loose object which takes
-	// precedence over the valid packed copy when resolving this commit.
+	// An independently populated empty store has only loose objects; there is
+	// no valid packed copy to mask this corruption.
 	require.NoError(t, os.MkdirAll(filepath.Dir(objectPath), 0o700))
+	require.NoError(t, os.Chmod(objectPath, 0o600))
 	require.NoError(t, os.WriteFile(objectPath, []byte("invalid zlib object"), 0o600))
+	broken, err := gogit.PlainOpen(dir)
+	require.NoError(t, err)
+	_, err = broken.CommitObject(plumbing.NewHash(pin))
+	require.Error(t, err, "independent corruption oracle must fail before invoking the executor")
 	input := NewGitCloneExecutorInput{URL: server.url(), Ref: pin, Dir: dir}
 	var acquisitionErr error
 	require.NotPanics(t, func() { acquisitionErr = NewGitCloneExecutor(input)(context.Background()) })
@@ -166,19 +166,19 @@ func TestGitImmutableCorruptTreeDoesNotRefresh(t *testing.T) {
 	fixture := newImmutableFixture(t)
 	server := newImmutableHTTP(t, fixture)
 	dir := filepath.Join(immutableFixtureDirectory(t), "checkout")
-	repo, err := gogit.PlainClone(dir, false, &gogit.CloneOptions{URL: filepath.Join(fixture.dir, "fixture.git")})
-	require.NoError(t, err)
-	config, err := repo.Config()
-	require.NoError(t, err)
-	config.Remotes["origin"].URLs = []string{server.url()}
-	require.NoError(t, repo.SetConfig(config))
 	pin := fixture.commits[7]
+	repo := seedImmutableLooseCheckout(t, fixture, dir, server.url(), pin)
 	commit, err := repo.CommitObject(pin)
 	require.NoError(t, err)
 	treeHash := commit.TreeHash.String()
 	objectPath := filepath.Join(dir, ".git", "objects", treeHash[:2], treeHash[2:])
 	require.NoError(t, os.MkdirAll(filepath.Dir(objectPath), 0o700))
+	require.NoError(t, os.Chmod(objectPath, 0o600))
 	require.NoError(t, os.WriteFile(objectPath, []byte("invalid tree zlib object"), 0o600))
+	broken, err := gogit.PlainOpen(dir)
+	require.NoError(t, err)
+	_, err = broken.TreeObject(commit.TreeHash)
+	require.Error(t, err, "independent tree corruption oracle must fail before invoking the executor")
 	input := NewGitCloneExecutorInput{URL: server.url(), Ref: pin.String(), Dir: dir}
 	var acquisitionErr error
 	require.NotPanics(t, func() { acquisitionErr = NewGitCloneExecutor(input)(context.Background()) })
