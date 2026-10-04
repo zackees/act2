@@ -73,13 +73,15 @@ func (sd *stepDocker) runUsesContainer() common.Executor {
 		}
 
 		stepContainer := sd.newStepContainer(ctx, image, cmd, entrypoint)
+		transfer := newHostDockerTransfer(rc)
 
 		return common.NewPipelineExecutor(
 			stepContainer.Pull(rc.Config.ForcePull),
 			stepContainer.Remove().IfBool(!rc.Config.ReuseContainers),
 			stepContainer.Create(rc.Config.ContainerCapAdd, rc.Config.ContainerCapDrop),
+			transfer.stage(stepContainer),
 			stepContainer.Start(true),
-		).Finally(
+		).Finally(transfer.restore(stepContainer)).Finally(
 			stepContainer.Remove().IfBool(!rc.Config.ReuseContainers),
 		).Finally(stepContainer.Close())(ctx)
 	}
@@ -96,7 +98,7 @@ func (sd *stepDocker) newStepContainer(ctx context.Context, image string, cmd []
 	stdout, stderr := rawLogWriters(common.Logger(ctx), rc.commandHandler(ctx), rc.Config.LogOutput)
 	envList := make([]string, 0)
 	for k, v := range sd.env {
-		envList = append(envList, fmt.Sprintf("%s=%s", k, v))
+		envList = append(envList, fmt.Sprintf("%s=%s", k, hostDockerEnv(rc, k, v)))
 	}
 
 	envList = append(envList, fmt.Sprintf("%s=%s", "RUNNER_TOOL_CACHE", "/opt/hostedtoolcache"))
@@ -105,17 +107,24 @@ func (sd *stepDocker) newStepContainer(ctx context.Context, image string, cmd []
 	envList = append(envList, fmt.Sprintf("%s=%s", "RUNNER_TEMP", "/tmp"))
 
 	binds, mounts := rc.GetBindsAndMounts()
+	networkMode := fmt.Sprintf("container:%s", rc.jobContainerName())
+	workdir := rc.JobContainer.ToContainerPath(rc.Config.Workdir)
+	if _, ok := rc.JobContainer.(*container.HostEnvironment); ok {
+		networkMode = "default"
+		ext := container.LinuxContainerEnvironmentExtensions{}
+		workdir = ext.ToContainerPath(rc.Config.Workdir)
+	}
 	stepContainer := ContainerNewContainer(&container.NewContainerInput{
 		Cmd:         cmd,
 		Entrypoint:  entrypoint,
-		WorkingDir:  rc.JobContainer.ToContainerPath(rc.Config.Workdir),
+		WorkingDir:  workdir,
 		Image:       image,
 		Username:    rc.Config.Secrets["DOCKER_USERNAME"],
 		Password:    rc.Config.Secrets["DOCKER_PASSWORD"],
 		Name:        createContainerName(rc.jobContainerName(), step.ID),
 		Env:         envList,
 		Mounts:      mounts,
-		NetworkMode: fmt.Sprintf("container:%s", rc.jobContainerName()),
+		NetworkMode: networkMode,
 		Binds:       binds,
 		Stdout:      stdout,
 		Stderr:      stderr,
