@@ -259,3 +259,12 @@ invalid intervals, cancellation before the first pass, and actual busy-to-idle
 root lease recovery using a running handler. An empty store lease test proves
 retry coordination; aggregate byte eviction remains covered by the separate
 cohort workload tests.
+
+The watcher workload test seeds three completed 80-byte archives through the
+real storage and metadata implementations, with shutdown retention disabled.
+No-byte-policy maintenance leaves 240 bytes. The watched CLI with an 80-byte
+budget removes the two eligible old cold archives and preserves the recently
+used warm archive. A fresh server then serves that key and its exact bytes via
+real loopback HTTP lookup/download. This passes under the race detector and
+pinned lint. It proves idle archive convergence independently of shutdown
+retention; it does not simulate SIGKILL or Bosn process supervision.
