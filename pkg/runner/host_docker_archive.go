@@ -253,7 +253,10 @@ func (reader *hostArchiveReader) validateLegacyDirectory(kind byte, size int64) 
 		return nil
 	}
 	{
-		name := strings.TrimRight(string(reader.block[:100]), "\x00")
+		name, err := legacyArchiveHeaderName(reader.block)
+		if err != nil {
+			return err
+		}
 		if reader.paxName != "" {
 			name = reader.paxName
 		}
@@ -265,4 +268,26 @@ func (reader *hostArchiveReader) validateLegacyDirectory(kind byte, size int64) 
 		}
 	}
 	return nil
+}
+
+// Resolve format-specific names with the same parser as the real decoder.
+// A private fixed-size regular, zero-body header cannot trigger PAX, GNU
+// metadata or sparse allocation; GNU timestamp fields retain their meaning.
+func legacyArchiveHeaderName(block [512]byte) (string, error) {
+	block[156] = tar.TypeReg
+	copy(block[124:136], []byte("00000000000\x00"))
+	for i := 148; i < 156; i++ {
+		block[i] = ' '
+	}
+	checksum := 0
+	for _, value := range block {
+		checksum += int(value)
+	}
+	field := strconv.FormatInt(int64(checksum), 8)
+	copy(block[148:156], []byte(strings.Repeat("0", 6-len(field))+field+"\x00 "))
+	header, err := tar.NewReader(bytes.NewReader(block[:])).Next()
+	if err != nil {
+		return "", err
+	}
+	return header.Name, nil
 }
