@@ -24,11 +24,12 @@ import (
 // deadlines or the integration suite's existing Go timeout.
 func TestGitCloneAdmissionCancellation(t *testing.T) {
 	cloneLock.Lock()
+	dir := filepath.Join(t.TempDir(), "absent")
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	done := make(chan error, 1)
 	go func() {
-		done <- NewGitCloneExecutor(NewGitCloneExecutorInput{Dir: filepath.Join(t.TempDir(), "absent")})(ctx)
+		done <- NewGitCloneExecutor(NewGitCloneExecutorInput{Dir: dir})(ctx)
 	}()
 	select {
 	case err := <-done:
@@ -124,7 +125,18 @@ func TestGitRefreshCancellation(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			done := make(chan error, 1)
-			go func() { done <- NewGitCloneExecutor(input)(ctx) }()
+			terminated := make(chan struct{})
+			go func() {
+				defer close(terminated)
+				done <- NewGitCloneExecutor(input)(ctx)
+			}()
+			t.Cleanup(func() {
+				select {
+				case <-terminated:
+				case <-time.After(3 * time.Second):
+					t.Error("fixture executor did not terminate after server release")
+				}
+			})
 			select {
 			case <-entered:
 			case err := <-done:
