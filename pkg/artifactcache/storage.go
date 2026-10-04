@@ -13,6 +13,7 @@ type Storage struct {
 }
 
 func NewStorage(rootDir string) (*Storage, error) {
+	//nolint:gosec // The local caller intentionally chooses the cache storage root.
 	if err := os.MkdirAll(rootDir, 0o755); err != nil {
 		return nil, err
 	}
@@ -97,9 +98,13 @@ func (s *Storage) Serve(w http.ResponseWriter, r *http.Request, id uint64) {
 	http.ServeFile(w, r, name)
 }
 
-func (s *Storage) Remove(id uint64) {
-	_ = os.Remove(s.filename(id))
-	_ = os.RemoveAll(s.tempDir(id))
+func (s *Storage) Remove(id uint64) error {
+	// #nosec G703 -- configured local storage plus numeric cache ID.
+	if err := os.Remove(s.filename(id)); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	// #nosec G703 -- configured local temporary storage plus numeric cache ID.
+	return os.RemoveAll(s.tempDir(id))
 }
 
 func (s *Storage) filename(id uint64) string {
