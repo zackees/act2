@@ -6,8 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	"go.etcd.io/bbolt"
 )
 
 const cohortMarker = "cohort-v1"
@@ -16,7 +14,7 @@ const cohortIdentity = "act2-cache-cohort-v1\n"
 // enrollCohort holds a shared root lock for the server lifetime. Aggregate
 // maintenance takes the exclusive root lock before namespace locks/metadata.
 // Only direct child namespaces are allowed. Legacy namespaces are refused.
-func enrollCohort(dir, root string) (*bbolt.DB, error) {
+func enrollCohort(dir, root string) (transferLease, error) {
 	marker := filepath.Join(dir, cohortMarker)
 	if root == "" {
 		if _, err := os.Lstat(marker); !os.IsNotExist(err) { // #nosec G703 -- explicit caller-selected namespace marker.

@@ -11,7 +11,6 @@ import (
 
 	log "github.com/sirupsen/logrus"
 	"github.com/timshannon/bolthold"
-	"go.etcd.io/bbolt"
 )
 
 const maxCohortNamespaces = 64
@@ -30,7 +29,7 @@ type CohortReport struct {
 
 type maintainedNamespace struct {
 	h      *Handler
-	lock   *bbolt.DB
+	lock   transferLease
 	db     *bolthold.Store
 	report *RetentionReport
 }

@@ -14,13 +14,14 @@ import (
 // lock. Unlike the metadata DB lock, this covers the entire file transfer.
 // Locks are released by the OS when a server crashes. Every peer must use this
 // protocol before quota eviction is enabled in a shared store.
-func (h *Handler) transferLock(readOnly bool) (*bbolt.DB, error) {
+type transferLease interface{ Close() error }
+
+func (h *Handler) transferLock(readOnly bool) (transferLease, error) {
 	timeout := 25 * time.Millisecond
 	if readOnly {
 		timeout = 5 * time.Second
 	}
-	return bbolt.Open(filepath.Join(h.dir, "transfers.bolt"), 0o600,
-		&bbolt.Options{ReadOnly: readOnly, Timeout: timeout, OpenFile: openCoordinationFile})
+	return openTransferLease(filepath.Join(h.dir, "transfers.bolt"), readOnly, timeout)
 }
 
 func (h *Handler) prepareTransferLock() error {
@@ -38,9 +39,8 @@ func (h *Handler) prepareTransferLock() error {
 	return db.Close()
 }
 
-// bbolt chooses shared/exclusive OS locking from Options.ReadOnly. Its file
-// descriptor can stay read-only in either case: this DB is used only as a
-// mutex, never for write transactions. This also permits consistent audit
+// The coordination descriptor remains read-only. The file is used only as a
+// mutex after initialization, never for write transactions. This also permits consistent audit
 // on a read-only cache mount, and cannot recreate a concurrently removed file.
 func openCoordinationFile(name string, _ int, _ os.FileMode) (*os.File, error) {
 	info, err := os.Lstat(name)

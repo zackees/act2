@@ -11,7 +11,6 @@ import (
 
 	log "github.com/sirupsen/logrus"
 	"github.com/timshannon/bolthold"
-	"go.etcd.io/bbolt"
 )
 
 type ImportReport struct {
@@ -120,7 +119,7 @@ func publishImportWithSpace(ctx context.Context, source *Handler, sourceDB *bolt
 	return err
 }
 
-func createImportStage(root, destination string) (string, *bbolt.DB, error) {
+func createImportStage(root, destination string) (string, transferLease, error) {
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return "", nil, err
 	}

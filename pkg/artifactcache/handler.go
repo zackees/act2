@@ -43,7 +43,7 @@ type Handler struct {
 	policy           Policy
 	stopMaintenance  chan struct{}
 	maintenanceDone  chan struct{}
-	cohortLease      *bbolt.DB
+	cohortLease      transferLease
 	retentionOnClose *CohortReport
 
 	outboundIP        string
