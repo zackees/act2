@@ -695,6 +695,10 @@ func TestRunContextGetEnv(t *testing.T) {
 }
 
 func TestSetRuntimeVariables(t *testing.T) {
+	// This fixture expects locally generated configuration, independent of an
+	// enclosing workflow's artifact service. Production inheritance stays tested.
+	t.Setenv("ACTIONS_RUNTIME_URL", "")
+	t.Setenv("ACTIONS_RUNTIME_TOKEN", "")
 	rc := &RunContext{
 		Config: &Config{
 			ArtifactServerAddr: "myhost",
@@ -716,6 +720,10 @@ func TestSetRuntimeVariables(t *testing.T) {
 }
 
 func TestSetRuntimeVariablesWithRunID(t *testing.T) {
+	// This fixture expects locally generated configuration, independent of an
+	// enclosing workflow's artifact service. Production inheritance stays tested.
+	t.Setenv("ACTIONS_RUNTIME_URL", "")
+	t.Setenv("ACTIONS_RUNTIME_TOKEN", "")
 	rc := &RunContext{
 		Config: &Config{
 			ArtifactServerAddr: "myhost",
@@ -773,4 +781,15 @@ func TestOverlayFile(t *testing.T) {
 	assert.False(t, ok, "a file the overlay lacks falls back to the workspace")
 	_, ok = rc.overlayFile("a/dir")
 	assert.False(t, ok, "only regular files override")
+}
+
+func TestSetRuntimeVariablesInheritedEnvironment(t *testing.T) {
+	t.Setenv("ACTIONS_RUNTIME_URL", "http://outer.example.invalid/")
+	t.Setenv("ACTIONS_RUNTIME_TOKEN", "fixture-outer-token")
+	rc := &RunContext{Config: &Config{ArtifactServerAddr: "myhost", ArtifactServerPort: "8000"}}
+	env := map[string]string{}
+	setActionRuntimeVars(rc, env)
+	assert.Equal(t, "http://outer.example.invalid/", env["ACTIONS_RUNTIME_URL"])
+	assert.Equal(t, "http://outer.example.invalid/", env["ACTIONS_RESULTS_URL"])
+	assert.Equal(t, "fixture-outer-token", env["ACTIONS_RUNTIME_TOKEN"])
 }
