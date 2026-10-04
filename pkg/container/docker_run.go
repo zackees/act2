@@ -349,7 +349,10 @@ func (cr *containerReference) remove() common.Executor {
 			Force:         true,
 		})
 		if err != nil {
-			logger.Error(fmt.Errorf("failed to remove container: %w", err))
+			// Keep the identity when Docker has not confirmed removal. The caller
+			// must receive the original failure rather than an expired-context
+			// error from a later cleanup operation.
+			return fmt.Errorf("failed to remove container %s: %w", cr.id, err)
 		}
 
 		logger.Debugf("Removed container: %v", cr.id)
