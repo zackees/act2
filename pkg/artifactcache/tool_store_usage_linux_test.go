@@ -55,6 +55,26 @@ func TestToolStoreUsageCountsHardlinkedGenerationsOnce(t *testing.T) {
 	}
 }
 
+func TestToolStoreUsageIncludesDirectoryApparentBytes(t *testing.T) {
+	root := t.TempDir()
+	empty := filepath.Join(root, "empty")
+	require.NoError(t, os.Mkdir(empty, 0755))
+	rootInfo, err := os.Stat(root)
+	require.NoError(t, err)
+	emptyInfo, err := os.Stat(empty)
+	require.NoError(t, err)
+	// A private immutable tree isolates directory accounting from file payloads,
+	// hardlinks and catalog control files. No concurrent mutation needs exclusion.
+	report := auditToolStoreUsageLocked(context.Background(), root, 100)
+	require.False(t, report.Partial, report.Error)
+	require.NotNil(t, report.ApparentBytes)
+	require.Equal(t, rootInfo.Size()+emptyInfo.Size(), *report.ApparentBytes)
+	require.NotNil(t, report.UniqueFileBytes)
+	require.Zero(t, *report.UniqueFileBytes, "directory metadata must not become file payload bytes")
+	require.Equal(t, 2, report.PathEntries)
+	require.Equal(t, 2, report.UniqueInodes)
+}
+
 func TestToolStoreUsageDistinguishesSparseApparentAndAllocatedBytes(t *testing.T) {
 	store, _ := toolGenerationFixture(t)
 	path := filepath.Join(store, "sparse")
