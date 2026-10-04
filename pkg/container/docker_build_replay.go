@@ -12,7 +12,7 @@ import (
  "path"
  "strings"
 
- "github.com/moby/go-archive"
+ "github.com/moby/go-archive/compression"
  "github.com/moby/moby/client"
  "github.com/moby/moby/client/pkg/versions"
  specs "github.com/opencontainers/image-spec/specs-go/v1"
@@ -49,7 +49,7 @@ func (replay *replayBuildContext) reader() (io.Reader, error) {
 func (replay *replayBuildContext) dockerfile(name string) ([]byte, error) {
  source, err := replay.reader()
  if err != nil { return nil, err }
- decoded, err := archive.DecompressStream(source)
+ decoded, err := compression.DecompressStream(source)
  if err != nil { return nil, err }
  defer decoded.Close()
  guard := &buildArchiveReader{source:decoded,limits:buildArchiveLimits{bytes:maxBuildContextBytes,headers:1000000,metadataBytes:1<<20,metadataTotal:8<<20}}
