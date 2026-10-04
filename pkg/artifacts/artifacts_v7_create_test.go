@@ -24,6 +24,8 @@ func TestV7CreateArtifactRequest(t *testing.T) {
 	}{
 		{"legacy", `{"workflow_run_backend_id":"1","workflow_job_run_backend_id":"2","name":"bundle","version":4}`, true},
 		{"v7-snake", `{"workflow_run_backend_id":"1","workflow_job_run_backend_id":"2","name":"bundle","version":7,"mime_type":"application/zip"}`, true},
+		{"v7-empty", `{"workflow_run_backend_id":"1","workflow_job_run_backend_id":"2","name":"bundle","version":7,"mime_type":""}`, true},
+		{"v7-null", `{"workflow_run_backend_id":"1","workflow_job_run_backend_id":"2","name":"bundle","version":7,"mime_type":null}`, true},
 		{"v7-camel", `{"workflowRunBackendId":"1","workflowJobRunBackendId":"2","name":"bundle","version":7,"mimeType":"application/zip"}`, true},
 		{"unknown-field", `{"workflow_run_backend_id":"1","name":"bundle","version":7,"mime_type":"application/zip","unexpected":true}`, false},
 		{"wrong-type", `{"workflow_run_backend_id":"1","name":"bundle","version":7,"mime_type":42}`, false},
