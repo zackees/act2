@@ -29,6 +29,12 @@ func initializeToolGenerationReaderLock(stage string) error {
 }
 
 func acquireToolGenerationLease(ctx context.Context, root, id string, maxBytes int64) (ToolGenerationLease, error) {
+	return acquireToolGenerationLeaseWithReader(ctx, root, id, maxBytes, func(path string) (ToolGenerationLease, error) {
+		return openTransferLease(path, true, 100*time.Millisecond)
+	})
+}
+
+func acquireToolGenerationLeaseWithReader(ctx context.Context, root, id string, maxBytes int64, openReader func(string) (ToolGenerationLease, error)) (ToolGenerationLease, error) {
 	spec := ToolGenerationSpec{SchemaVersion: 1, Installs: []ToolGenerationInstall{{Path: "lease", ObjectID: id}}}
 	if _, err := validateToolGenerationSpec(root, spec, maxBytes); err != nil {
 		return nil, err
@@ -57,7 +63,7 @@ func acquireToolGenerationLease(ctx context.Context, root, id string, maxBytes i
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return openTransferLease(filepath.Join(generation, toolGenerationReaderLock), true, 100*time.Millisecond)
+	return openReader(filepath.Join(generation, toolGenerationReaderLock))
 }
 
 func readToolGenerationManifest(generation, id string) (toolGenerationManifest, []byte, error) {
