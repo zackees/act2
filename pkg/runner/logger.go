@@ -185,6 +185,23 @@ type jobLogFormatter struct {
 	logPrefixJobID bool
 }
 
+// rawLogWriters keep the original pipe identity in act's structured output.
+// Both pipes still pass through the workflow-command handler independently.
+func rawLogWriters(logger logrus.FieldLogger, command common.LineHandler, logOutput bool) (io.Writer, io.Writer) {
+	makeWriter := func(stream string) io.Writer {
+		rawLogger := logger.WithFields(logrus.Fields{"raw_output": true, "raw_stream": stream})
+		return common.NewLineWriter(command, func(line string) bool {
+			if logOutput {
+				rawLogger.Infof("%s", line)
+			} else {
+				rawLogger.Debugf("%s", line)
+			}
+			return true
+		})
+	}
+	return makeWriter("stdout"), makeWriter("stderr")
+}
+
 func (f *jobLogFormatter) Format(entry *logrus.Entry) ([]byte, error) {
 	b := &bytes.Buffer{}
 

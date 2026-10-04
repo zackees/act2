@@ -204,17 +204,8 @@ func useStepLogger(rc *RunContext, stepModel *model.Step, stage stepStage, execu
 	return func(ctx context.Context) error {
 		ctx = withStepLogger(ctx, stepModel.ID, rc.ExprEval.Interpolate(ctx, stepModel.String()), stage.String())
 
-		rawLogger := common.Logger(ctx).WithField("raw_output", true)
-		logWriter := common.NewLineWriter(rc.commandHandler(ctx), func(s string) bool {
-			if rc.Config.LogOutput {
-				rawLogger.Infof("%s", s)
-			} else {
-				rawLogger.Debugf("%s", s)
-			}
-			return true
-		})
-
-		oldout, olderr := rc.JobContainer.ReplaceLogWriter(logWriter, logWriter)
+		stdout, stderr := rawLogWriters(common.Logger(ctx), rc.commandHandler(ctx), rc.Config.LogOutput)
+		oldout, olderr := rc.JobContainer.ReplaceLogWriter(stdout, stderr)
 		defer rc.JobContainer.ReplaceLogWriter(oldout, olderr)
 
 		return executor(ctx)

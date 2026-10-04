@@ -2,15 +2,38 @@ package container
 
 import (
 	"archive/tar"
+	"bytes"
 	"context"
 	"io"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 )
+
+func TestHostEnvironmentSeparateStreams(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell")
+	}
+	var stdout, stderr bytes.Buffer
+	shell, err := exec.LookPath("sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := &HostEnvironment{
+		Path: t.TempDir(), StdOut: &stdout, StdErr: &stderr, SeparateStreams: true,
+	}
+	if err := e.Exec([]string{shell, "-c", "printf out; printf err >&2"}, nil, "", "")(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if stdout.String() != "out" || stderr.String() != "err" {
+		t.Fatalf("stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+}
 
 // Type assert HostEnvironment implements ExecutionsEnvironment
 var _ ExecutionsEnvironment = &HostEnvironment{}
