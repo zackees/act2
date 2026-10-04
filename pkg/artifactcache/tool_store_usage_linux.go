@@ -75,9 +75,9 @@ func auditToolStoreUsageLocked(ctx context.Context, root string, maxEntries int)
 		}
 		seen[key] = struct{}{}
 		report.UniqueInodes++
-		// Apparent bytes include directory metadata, as GNU du 9.1 in the
-		// supported build image does. Special inodes have no apparent payload;
-		// their allocated blocks still contribute to physical inode accounting.
+		// The apparent-byte contract includes directory metadata on every
+		// runner, independently of du's version. Special inodes have no apparent
+		// payload; their allocated blocks still contribute to physical accounting.
 		if info.Mode().IsRegular() || info.IsDir() || info.Mode()&fs.ModeSymlink != 0 {
 			if err := addToolUsageBytes(&apparent, info.Size()); err != nil {
 				return err

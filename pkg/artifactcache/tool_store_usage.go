@@ -10,9 +10,11 @@ import (
 // scans. Allocated bytes use inode blocks, not filesystem journal/backing-store
 // allocation or a quota. Cross-store hardlinks require broader deduplication.
 // Apparent bytes count st_size once per unique regular file, directory and
-// symlink, including directory metadata as in the supported GNU du 9.1 oracle.
-// Allocated bytes include blocks of every inode type. Referenced file bytes
-// count all regular-file paths and deliberately do not deduplicate hardlinks.
+// symlink, including directory metadata regardless of the installed du version.
+// GNU du >=9.2 excludes directory st_size; tests independently supplement that
+// oracle rather than changing this contract. Allocated bytes include blocks of
+// every inode type. Referenced file bytes count all regular-file paths and
+// deliberately do not deduplicate hardlinks.
 type ToolStoreUsage struct {
 	SchemaVersion       int       `json:"schema_version"`
 	Root                string    `json:"root"`

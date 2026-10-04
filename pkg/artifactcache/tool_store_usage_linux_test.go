@@ -39,17 +39,25 @@ func TestToolStoreUsageCountsHardlinkedGenerationsOnce(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	for _, metric := range []struct {
-		args     []string
-		expected *int64
+		args              []string
+		expected          *int64
+		directoryMetadata bool
 	}{
-		{[]string{"--summarize", "--block-size=1", store}, report.AllocatedBytes},
-		{[]string{"--summarize", "--apparent-size", "--block-size=1", store}, report.ApparentBytes},
+		{[]string{"--summarize", "--block-size=1", store}, report.AllocatedBytes, false},
+		{[]string{"--summarize", "--apparent-size", "--block-size=1", store}, report.ApparentBytes, true},
 	} {
 		// #nosec G204 -- Fixed du executable and literal options over this test's private store; no shell is inserted.
 		output, err := exec.CommandContext(ctx, "du", metric.args...).Output()
 		require.NoError(t, err)
 		value, err := strconv.ParseInt(strings.Fields(string(output))[0], 10, 64)
 		require.NoError(t, err)
+		if metric.directoryMetadata {
+			// GNU du >=9.2 omits directory st_size; independent find restores
+			// the same fixed metric contract that older du reports directly.
+			supplement, supplementErr := independentDuDirectorySupplement(ctx, store)
+			require.NoError(t, supplementErr)
+			value += supplement
+		}
 		require.NotNil(t, metric.expected)
 		require.Equal(t, value, *metric.expected, "independent du must agree, including metadata and non-followed symlinks")
 	}
