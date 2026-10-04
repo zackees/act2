@@ -35,6 +35,10 @@ func acquireToolGenerationLease(ctx context.Context, root, id string, maxBytes i
 }
 
 func acquireToolGenerationLeaseWithReader(ctx context.Context, root, id string, maxBytes int64, openReader func(string) (ToolGenerationLease, error)) (ToolGenerationLease, error) {
+	return acquireToolGenerationLeaseWithValidation(ctx, root, id, maxBytes, openReader, verifyToolGeneration)
+}
+
+func acquireToolGenerationLeaseWithValidation(ctx context.Context, root, id string, maxBytes int64, openReader func(string) (ToolGenerationLease, error), verify func(context.Context, string, []byte, toolManifest, int64) error) (ToolGenerationLease, error) {
 	spec := ToolGenerationSpec{SchemaVersion: 1, Installs: []ToolGenerationInstall{{Path: "lease", ObjectID: id}}}
 	if _, err := validateToolGenerationSpec(root, spec, maxBytes); err != nil {
 		return nil, err
@@ -48,7 +52,12 @@ func acquireToolGenerationLeaseWithReader(ctx context.Context, root, id string, 
 	if err != nil {
 		return nil, err
 	}
-	defer catalog.Close()
+	catalogHeld := true
+	defer func() {
+		if catalogHeld {
+			_ = catalog.Close()
+		}
+	}()
 	generation := filepath.Join(root, toolGenerationDirectory, id)
 	manifest, data, err := readToolGenerationManifest(generation, id)
 	if err != nil {
@@ -57,13 +66,31 @@ func acquireToolGenerationLeaseWithReader(ctx context.Context, root, id string, 
 	if _, err := validateToolGenerationSpec(root, ToolGenerationSpec{SchemaVersion: manifest.SchemaVersion, Installs: manifest.Installs}, maxBytes); err != nil {
 		return nil, err
 	}
-	if err := verifyToolGeneration(ctx, generation, data, manifest.Tree, maxBytes); err != nil {
+	reader, err := openReader(filepath.Join(generation, toolGenerationReaderLock))
+	if err != nil {
+		return nil, err
+	}
+	admitted := false
+	defer func() {
+		if !admitted {
+			_ = reader.Close()
+		}
+	}()
+	// The original generation reader now excludes retirement. Keep expensive
+	// payload validation outside the machine-wide catalog mutex so independent
+	// engines and unrelated publishers can proceed without a hash-sized queue.
+	if err := catalog.Close(); err != nil {
+		return nil, err
+	}
+	catalogHeld = false
+	if err := verify(ctx, generation, data, manifest.Tree, maxBytes); err != nil {
 		return nil, err
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return openReader(filepath.Join(generation, toolGenerationReaderLock))
+	admitted = true
+	return reader, nil
 }
 
 func readToolGenerationManifest(generation, id string) (toolGenerationManifest, []byte, error) {
