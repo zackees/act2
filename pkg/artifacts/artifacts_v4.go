@@ -92,6 +92,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -108,12 +109,21 @@ const (
 	ArtifactV4ContentEncoding = "application/zip"
 )
 
+// ArtifactLimits bounds the local service, rather than claiming a GitHub quota.
+type ArtifactLimits struct {
+	MaxBlockBytes int64
+	MaxBlocks     int
+	MaxTotalBytes int64
+}
+
 type artifactV4Routes struct {
-	prefix  string
-	fs      WriteFS
-	rfs     fs.FS
-	AppURL  string
-	baseDir string
+	limits     ArtifactLimits
+	blockState *artifactBlockState
+	prefix     string
+	fs         WriteFS
+	rfs        fs.FS
+	AppURL     string
+	baseDir    string
 }
 
 type ArtifactContext struct {
@@ -147,10 +157,11 @@ func validateRunIDV4(ctx *ArtifactContext, rawRunID string) (interface{}, int64,
 
 func RoutesV4(router *httprouter.Router, baseDir string, fsys WriteFS, rfs fs.FS) {
 	route := &artifactV4Routes{
-		fs:      fsys,
-		rfs:     rfs,
-		baseDir: baseDir,
-		prefix:  ArtifactV4RouteBase,
+		blockState: &artifactBlockState{},
+		fs:         fsys,
+		rfs:        rfs,
+		baseDir:    baseDir,
+		prefix:     ArtifactV4RouteBase,
 	}
 	router.POST(path.Join(ArtifactV4RouteBase, "CreateArtifact"), func(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 		route.AppURL = r.Host
@@ -351,15 +362,41 @@ func (r *artifactV4Routes) artifactBlockPath(task int64, artifactName, blockID s
 }
 
 func (r *artifactV4Routes) stageArtifactBlock(ctx *ArtifactContext, task int64, artifactName, blockID string) {
-	file, err := r.fs.OpenWritable(r.artifactBlockPath(task, artifactName, blockID))
+	root, store, err := r.openBlockStore()
 	if err != nil {
-		ctx.Error(http.StatusInternalServerError)
+		artifactBlockError(ctx, err)
 		return
 	}
-	_, copyErr := io.Copy(file, ctx.Req.Body)
-	closeErr := file.Close()
-	if copyErr != nil || closeErr != nil {
-		ctx.Error(http.StatusInternalServerError)
+	defer root.Close()
+	relative, err := filepath.Rel(r.baseDir, r.artifactBlockPath(task, artifactName, blockID))
+	if err != nil {
+		artifactBlockError(ctx, err)
+		return
+	}
+	if err := store.prepareBlockDirectory(root, filepath.Dir(relative)); err != nil {
+		artifactBlockError(ctx, err)
+		return
+	}
+	entry, err := store.file(relative, true)
+	if err != nil {
+		artifactBlockError(ctx, err)
+		return
+	}
+	entry.mu.Lock()
+	defer entry.mu.Unlock()
+	writer, err := store.openWriter(root, relative, entry, store.limits.MaxBlockBytes)
+	if err != nil {
+		artifactBlockError(ctx, err)
+		return
+	}
+	_, copyErr := io.Copy(writer, ctx.Req.Body)
+	closeErr := writer.finish(copyErr)
+	if copyErr != nil {
+		artifactBlockError(ctx, copyErr)
+		return
+	}
+	if closeErr != nil {
+		artifactBlockError(ctx, closeErr)
 		return
 	}
 	ctx.JSON(http.StatusCreated)
@@ -381,43 +418,82 @@ func (r *artifactV4Routes) commitArtifactBlocks(ctx *ArtifactContext, task int64
 		ctx.Error(http.StatusBadRequest)
 		return
 	}
-	// Validate every block before replacing the archive; keep descriptors bounded.
+	root, store, err := r.openBlockStore()
+	if err != nil {
+		artifactBlockError(ctx, err)
+		return
+	}
+	defer root.Close()
+	if len(list.Blocks) > store.limits.MaxBlocks {
+		artifactBlockError(ctx, errArtifactLimit)
+		return
+	}
 	for _, ref := range list.Blocks {
 		if ref.ID == "" || (ref.XMLName.Local != "Latest" && ref.XMLName.Local != "Uncommitted" && ref.XMLName.Local != "Committed") {
 			ctx.Error(http.StatusBadRequest)
 			return
 		}
-		if _, err := fs.Stat(r.rfs, r.artifactBlockPath(task, artifactName, ref.ID)); err != nil {
+		relative, err := filepath.Rel(r.baseDir, r.artifactBlockPath(task, artifactName, ref.ID))
+		if err != nil {
+			ctx.Error(http.StatusBadRequest)
+			return
+		}
+		if err := store.prepareBlockDirectory(root, filepath.Dir(relative)); err != nil {
+			artifactBlockError(ctx, err)
+			return
+		}
+		if _, err := root.Stat(relative); err != nil {
 			ctx.Error(http.StatusBadRequest)
 			return
 		}
 	}
-	artifactPath := safeResolve(safeResolve(r.baseDir, fmt.Sprint(task)), artifactName)
-	file, err := r.fs.OpenWritable(safeResolve(artifactPath, artifactName+".zip"))
+	archivePath := safeResolve(safeResolve(safeResolve(r.baseDir, fmt.Sprint(task)), artifactName), artifactName+".zip")
+	relative, err := filepath.Rel(r.baseDir, archivePath)
 	if err != nil {
-		ctx.Error(http.StatusInternalServerError)
+		artifactBlockError(ctx, err)
+		return
+	}
+	entry, err := store.file(relative, false)
+	if err != nil {
+		artifactBlockError(ctx, err)
+		return
+	}
+	entry.mu.Lock()
+	defer entry.mu.Unlock()
+	writer, err := store.openWriter(root, relative, entry, store.limits.MaxTotalBytes)
+	if err != nil {
+		artifactBlockError(ctx, err)
 		return
 	}
 	for _, ref := range list.Blocks {
-		block, err := r.rfs.Open(r.artifactBlockPath(task, artifactName, ref.ID))
-		if err != nil {
-			_ = file.Close()
-			ctx.Error(http.StatusInternalServerError)
-			return
+		blockPath, err := filepath.Rel(r.baseDir, r.artifactBlockPath(task, artifactName, ref.ID))
+		if err == nil {
+			err = copyArtifactBlock(root, blockPath, writer)
 		}
-		_, copyErr := io.Copy(file, block)
-		closeErr := block.Close()
-		if copyErr != nil || closeErr != nil {
-			_ = file.Close()
-			ctx.Error(http.StatusInternalServerError)
+		if err != nil {
+			_ = writer.finish(err)
+			artifactBlockError(ctx, err)
 			return
 		}
 	}
-	if err := file.Close(); err != nil {
-		ctx.Error(http.StatusInternalServerError)
+	if err := writer.finish(nil); err != nil {
+		artifactBlockError(ctx, err)
 		return
 	}
 	ctx.JSON(http.StatusCreated)
+}
+
+func copyArtifactBlock(root *os.Root, relative string, writer io.Writer) error {
+	block, err := root.Open(relative)
+	if err != nil {
+		return err
+	}
+	_, copyErr := io.Copy(writer, block)
+	closeErr := block.Close()
+	if copyErr != nil {
+		return copyErr
+	}
+	return closeErr
 }
 
 func (r *artifactV4Routes) finalizeArtifact(ctx *ArtifactContext) {
