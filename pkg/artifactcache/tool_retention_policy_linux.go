@@ -50,11 +50,13 @@ func retainToolStore(ctx context.Context, root string, policy ToolRetentionPolic
 		report.fail(err)
 		return report
 	}
-	pins, err := readToolRecoveryPins(ctx, root, time.Now().UTC())
+	now := time.Now().UTC()
+	records, err := readToolRecoveryPinRecords(ctx, root, now)
 	if err != nil {
 		report.fail(err)
 		return report
 	}
+	pins := protectedToolRecoveryPins(records, now)
 	report.Before = auditToolStoreUsageLocked(ctx, root, policy.MaxEntries)
 	report.After = report.Before
 	if report.Before.Partial {
@@ -69,6 +71,16 @@ func retainToolStore(ctx context.Context, root string, policy ToolRetentionPolic
 	objects, err := toolRetentionCandidatesAt(root, policy.MaxCandidates)
 	if err != nil {
 		report.fail(err)
+		return report
+	}
+	report = expireToolRecoveryPinsLocked(ctx, catalog, root, now, records, policy.MaxCandidates, report)
+	if report.ExpiredPins > 0 || report.Partial {
+		report.After = auditToolStoreUsageLocked(ctx, root, policy.MaxEntries)
+		if report.After.Partial {
+			report.fail(fmt.Errorf("post-expiry inventory incomplete: %s", report.After.Error))
+		}
+	}
+	if report.Partial {
 		return report
 	}
 	report.StageRetention = retireToolStagesLocked(ctx, catalog, root, policy.ExpireBefore, policy.MaxEntries)

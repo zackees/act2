@@ -17,17 +17,21 @@ type ToolRetentionPolicy struct {
 }
 
 type ToolRetentionReport struct {
-	StageRetention       ToolStageRetentionReport `json:"stage_retention"`
-	RetiredObjects       []string                 `json:"retired_objects"`
-	ProtectedObjects     []string                 `json:"protected_objects"`
-	SchemaVersion        int                      `json:"schema_version"`
-	Before               ToolStoreUsage           `json:"before"`
-	After                ToolStoreUsage           `json:"after"`
-	RetiredGenerations   []string                 `json:"retired_generations"`
-	ProtectedGenerations []string                 `json:"protected_generations"`
-	ProtectedOverflow    bool                     `json:"protected_overflow"`
-	Partial              bool                     `json:"partial"`
-	Error                string                   `json:"error,omitempty"`
+	StageRetention          ToolStageRetentionReport `json:"stage_retention"`
+	RetiredObjects          []string                 `json:"retired_objects"`
+	ProtectedObjects        []string                 `json:"protected_objects"`
+	ExpiredPins             uint64                   `json:"expired_pins,omitempty"`
+	RemainingExpiredPins    uint64                   `json:"remaining_expired_pins,omitempty"`
+	ExpiredPinOwners        []string                 `json:"expired_pin_owners,omitempty"`
+	ExpiredPinOwnersOmitted uint64                   `json:"expired_pin_owners_omitted,omitempty"`
+	SchemaVersion           int                      `json:"schema_version"`
+	Before                  ToolStoreUsage           `json:"before"`
+	After                   ToolStoreUsage           `json:"after"`
+	RetiredGenerations      []string                 `json:"retired_generations"`
+	ProtectedGenerations    []string                 `json:"protected_generations"`
+	ProtectedOverflow       bool                     `json:"protected_overflow"`
+	Partial                 bool                     `json:"partial"`
+	Error                   string                   `json:"error,omitempty"`
 }
 
 func (r *ToolRetentionReport) fail(err error) { r.Partial, r.Error = true, toolReportError(err) }

@@ -120,11 +120,15 @@ func readToolRecoveryPins(ctx context.Context, root string, now time.Time) (map[
 	if err != nil {
 		return nil, err
 	}
+	return protectedToolRecoveryPins(records, now), nil
+}
+
+func protectedToolRecoveryPins(records map[string]ToolRecoveryPin, now time.Time) map[string]bool {
 	protected := make(map[string]bool)
 	for _, pin := range records {
 		if pin.ExpiresAt.After(now) {
 			protected[pin.Generation] = true
 		}
 	}
-	return protected, nil
+	return protected
 }

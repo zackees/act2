@@ -5,6 +5,7 @@ package artifactcache
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -99,6 +100,8 @@ func TestToolRecoveryPinsRejectAmbiguousStateAndPermitExpiry(t *testing.T) {
 					require.Contains(t, report.RetiredGenerations, first.Generation.ID)
 					_, err = os.Stat(first.Generation.Destination)
 					require.True(t, os.IsNotExist(err))
+					_, err = os.Stat(path)
+					require.True(t, os.IsNotExist(err), "expired recovery metadata must not accumulate")
 					return
 				}
 				require.True(t, report.Partial)
@@ -109,4 +112,41 @@ func TestToolRecoveryPinsRejectAmbiguousStateAndPermitExpiry(t *testing.T) {
 			require.NoError(t, err)
 		})
 	}
+}
+
+func TestToolRecoveryPinExpiryIsBoundedAndPreservesActiveReference(t *testing.T) {
+	ctx := context.Background()
+	root, spec := toolGenerationFixture(t)
+	first := InitializeToolGeneration(ctx, root, spec, 100)
+	require.False(t, first.Partial, first.Error)
+	next := UpdateToolGeneration(ctx, root, ToolGenerationSpec{SchemaVersion: 1, Installs: []ToolGenerationInstall{{Path: "Node/2/x64", ObjectID: spec.Installs[0].ObjectID}}}, 100)
+	require.False(t, next.Partial, next.Error)
+	now := time.Now().UTC()
+	active := ToolRecoveryPin{1, fmt.Sprintf("%064x", 42), first.Generation.ID, now, now.Add(time.Hour)}
+	published := PublishToolRecoveryPin(ctx, root, active, 100)
+	require.False(t, published.Partial, published.Error)
+	for index := 1; index <= 41; index++ {
+		pin := ToolRecoveryPin{1, fmt.Sprintf("%064x", index), first.Generation.ID, now.Add(-time.Hour), now.Add(-time.Minute)}
+		data, err := json.Marshal(pin)
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(filepath.Join(root, toolRecoveryPinDirectory, pin.Owner+".json"), data, 0600))
+	}
+	policy := ToolRetentionPolicy{MaxAllocatedBytes: 1, ExpireBefore: now.Add(time.Hour), MaxEntries: 10000, MaxCandidates: 8, MaxPayloadBytes: 100}
+	report := RetainToolStore(ctx, root, policy)
+	require.False(t, report.Partial, report.Error)
+	require.Equal(t, uint64(8), report.ExpiredPins)
+	require.Equal(t, uint64(33), report.RemainingExpiredPins)
+	require.Contains(t, report.ProtectedGenerations, first.Generation.ID)
+	policy.MaxCandidates = 100
+	report = RetainToolStore(ctx, root, policy)
+	require.False(t, report.Partial, report.Error)
+	require.Equal(t, uint64(33), report.ExpiredPins)
+	require.Zero(t, report.RemainingExpiredPins)
+	require.Len(t, report.ExpiredPinOwners, 32)
+	require.Equal(t, uint64(1), report.ExpiredPinOwnersOmitted)
+	entries, err := os.ReadDir(filepath.Join(root, toolRecoveryPinDirectory))
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	require.Equal(t, active.Owner+".json", entries[0].Name())
+	require.Contains(t, report.ProtectedGenerations, first.Generation.ID)
 }
