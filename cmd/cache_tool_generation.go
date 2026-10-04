@@ -14,30 +14,62 @@ import (
 )
 
 func newCacheToolGenerationCommand(ctx context.Context, input *Input) *cobra.Command {
+	return newCacheToolMutationCommand(ctx, input, toolGenerationPublication)
+}
+
+type toolGenerationMutationKind uint8
+
+const (
+	toolGenerationPublication toolGenerationMutationKind = iota
+	toolGenerationUpdate
+)
+
+func newCacheToolMutationCommand(ctx context.Context, input *Input, kind toolGenerationMutationKind) *cobra.Command {
 	var manifestPath string
 	var maxBytes int64
-	var apply bool
-	command := &cobra.Command{Use: "tool-generation", Short: "Assemble a closed tool generation from immutable install objects", Args: cobra.NoArgs,
+	var apply, initialize bool
+	use, description := "tool-generation", "Assemble a closed tool generation from immutable install objects"
+	if kind == toolGenerationUpdate {
+		use, description = "tool-update", "Merge closed install updates into the latest selected warm generation"
+	}
+	command := &cobra.Command{Use: use, Short: description, Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if !apply {
-				return fmt.Errorf("tool generation publication requires --apply")
+				return fmt.Errorf("tool generation mutation requires --apply")
 			}
 			spec, err := readToolGenerationSpec(manifestPath)
 			if err != nil {
 				return err
 			}
-			report := artifactcache.PublishToolGeneration(ctx, input.cacheServerPath, spec, maxBytes)
-			if err := json.NewEncoder(cmd.OutOrStdout()).Encode(report); err != nil {
+			var payload any
+			var partial bool
+			var message string
+			if kind == toolGenerationUpdate {
+				var report artifactcache.ToolGenerationUpdateReport
+				if initialize {
+					report = artifactcache.InitializeToolGeneration(ctx, input.cacheServerPath, spec, maxBytes)
+				} else {
+					report = artifactcache.UpdateToolGeneration(ctx, input.cacheServerPath, spec, maxBytes)
+				}
+				payload, partial, message = report, report.Partial, report.Error
+			} else {
+				report := artifactcache.PublishToolGeneration(ctx, input.cacheServerPath, spec, maxBytes)
+				payload, partial, message = report, report.Partial, report.Error
+			}
+			if err := json.NewEncoder(cmd.OutOrStdout()).Encode(payload); err != nil {
 				return err
 			}
-			if report.Partial {
-				return fmt.Errorf("tool generation incomplete: %s", report.Error)
+			if partial {
+				return fmt.Errorf("tool generation mutation incomplete: %s", message)
 			}
 			return nil
 		}}
-	command.Flags().StringVar(&manifestPath, "manifest", "", "Schema-1 JSON listing install paths and closed object IDs (maximum 64 KiB)")
+	command.Flags().StringVar(&manifestPath, "manifest", "", "Schema-1 JSON listing closed install paths and object IDs (maximum 64 KiB)")
 	command.Flags().Int64Var(&maxBytes, "max-bytes", 0, "Positive logical payload-byte bound for the complete generation")
-	command.Flags().BoolVar(&apply, "apply", false, "Validate objects and publish a generation sharing only closed file data")
+	command.Flags().BoolVar(&apply, "apply", false, "Validate objects and publish the requested immutable generation mutation")
+	if kind == toolGenerationUpdate {
+		command.Flags().BoolVar(&initialize, "initialize", false, "Explicitly bootstrap an unset selection; never an automatic missing-cache fallback")
+	}
 	return command
 }
 

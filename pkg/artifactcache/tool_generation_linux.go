@@ -41,6 +41,12 @@ func publishToolGeneration(ctx context.Context, root string, spec ToolGeneration
 		return report
 	}
 	defer lease.Close()
+	return publishToolGenerationLocked(ctx, root, installs, maxBytes)
+}
+
+// Caller holds the original catalog writer lock throughout publication.
+func publishToolGenerationLocked(ctx context.Context, root string, installs []ToolGenerationInstall, maxBytes int64) (report ToolSnapshotReport) {
+	report = ToolSnapshotReport{SchemaVersion: 1, Source: root, Completion: "generation-v1"}
 	manifest, total, err := planToolGeneration(ctx, root, installs, maxBytes)
 	if err != nil {
 		report.fail(err)
