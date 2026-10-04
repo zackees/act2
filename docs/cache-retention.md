@@ -109,7 +109,8 @@ Existing legacy namespaces are refused rather than implicitly enrolled. Cohort
 namespaces also refuse candidate servers that omit the root. Use a new directory
 cohort that the released Bosn/act2 pins never address. The marker is a protocol
 identity, not protection against arbitrary legacy programs writing that path.
-Migrating completed legacy archives into this cohort remains required for rollout.
+A bounded completed-archive import is implemented below. Bosn rollout and
+quiescence verification remain required.
 
 `cache prune-cohort --cache-server-path ROOT --max-bytes N --apply` holds the
 exclusive root lease, excluding live servers and new namespace creation. It locks
@@ -136,6 +137,46 @@ This policy bounds completed archive lengths only. Metadata, temporary/untracked
 files, allocated blocks, other cache classes and host image/build-cache storage
 still require Bosn accounting and separate retention. The root exclusion policy
 is conservative: any live server defers aggregate collection, even when idle.
-Bosn wiring, scheduled retry, versioned warm migration and sustained concurrent
+Bosn wiring, scheduled retry, automatic warm cutover and sustained concurrent
 workload validation remain open. Nothing enables eviction on the existing host
 cache or changes the released Bosn pin.
+
+## Warm legacy import (local candidate)
+
+`cache import --cache-server-path NEW_ROOT --from LEGACY_NAMESPACE
+--namespace NAME --max-bytes N --apply --source-quiescent` copies completed
+archives into a new cohort namespace. Stop legacy servers first: the source
+read-only metadata lock blocks legacy GC/metadata writes, and can make live
+legacy requests fail while it is held. Quiescence is a caller contract; the flag
+is an acknowledgement, not automatic evidence that servers are stopped. Bosn
+must establish that evidence before automated migration.
+
+The importer never mutates source metadata, files, retention timestamps or
+coordination files. It copies the most recently used completed archives that
+fit the positive byte bound, reporting skipped incomplete/over-budget entries.
+Original creation/use timestamps survive, so migration does not reset age policy.
+It validates exact lengths and SHA-256 of source/destination, then rechecks the
+source inventory fingerprint. Checksums detect observed file changes; they are
+not coordination with arbitrary legacy writers outside their metadata protocol.
+
+An exclusive cohort lease excludes candidate servers during staging. Files are
+synced, metadata closes, then the namespace is atomically renamed and the root
+directory synced. Existing destinations are refused. Failed staging deletes only
+this invocation's generated directory; cleanup failure keeps an explicit pending
+stage path. No unpublished copy emits successful import receipts. The 60-second
+operation bound is checked between I/O reads; filesystem calls can still block.
+At most twelve import receipts are emitted; omitted count is explicit.
+
+Verification: a fixture without transfer coordination imports unchanged metadata
+into the new cohort; a fresh server performs an actual HTTP cache lookup/download
+hit. New reservations allocate IDs beyond imported entries. Tests cover byte
+bounds, refusal to overwrite, cancellation/corrupt source and an archive changing
+after inventory: no namespace is published, staging is cleaned and source remains.
+The full artifactcache race suite and focused offline CLI/policy tests pass;
+the final migration-specific race check also passes. Pinned golangci-lint v2.11.4
+reports zero issues for the updated artifactcache and CLI packages.
+
+This is copy migration, so legacy bytes remain retained and duplication must be
+included in rollout headroom. Automatic Bosn quiescence, orchestration, retry and
+cutover are open. The new cohort is not enabled on the host; no legacy host cache
+was copied or removed by these tests.

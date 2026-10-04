@@ -47,7 +47,7 @@ func newCacheCommand(ctx context.Context, input *Input) *cobra.Command {
 		}}
 	cohort.Flags().Int64Var(&cohortMax, "max-bytes", 0, "Aggregate completed archive ceiling across the cohort; 0 disables it")
 	cohort.Flags().BoolVar(&cohortApply, "apply", false, "Apply age, namespace and aggregate retention to this cohort")
-	cache.AddCommand(audit, prune, cohort)
+	cache.AddCommand(audit, prune, cohort, newCacheImportCommand(ctx, input))
 	return cache
 }
 
@@ -59,4 +59,30 @@ func writeStoreAudit(cmd *cobra.Command, report artifactcache.StoreAudit) error 
 		return fmt.Errorf("cache %s audit is %s", report.Namespace, report.Status)
 	}
 	return nil
+}
+
+func newCacheImportCommand(ctx context.Context, input *Input) *cobra.Command {
+	var source, name string
+	var maxBytes int64
+	var apply, quiescent bool
+	command := &cobra.Command{Use: "import", Short: "Copy completed archives from a quiescent legacy store into a new cohort namespace", Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if !apply || !quiescent {
+				return fmt.Errorf("cache import requires --apply and --source-quiescent; stop legacy servers before importing")
+			}
+			report := artifactcache.ImportCompleted(ctx, source, input.cacheServerPath, name, maxBytes)
+			if err := json.NewEncoder(cmd.OutOrStdout()).Encode(report); err != nil {
+				return err
+			}
+			if report.Partial {
+				return fmt.Errorf("cache import incomplete: %s", report.Error)
+			}
+			return nil
+		}}
+	command.Flags().StringVar(&source, "from", "", "Existing quiescent legacy namespace; it is never modified")
+	command.Flags().StringVar(&name, "namespace", "", "New direct-child namespace name in the destination cohort")
+	command.Flags().Int64Var(&maxBytes, "max-bytes", 0, "Positive bound for imported completed archives; recent entries are selected first")
+	command.Flags().BoolVar(&apply, "apply", false, "Copy, validate and atomically publish the new namespace")
+	command.Flags().BoolVar(&quiescent, "source-quiescent", false, "Confirm legacy servers are stopped; metadata locking can block their requests")
+	return command
 }

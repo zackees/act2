@@ -73,3 +73,18 @@ func TestOfflineCohortCommandRequiresApplyAndDoesNotCreateRoot(t *testing.T) {
 		require.True(t, os.IsNotExist(err))
 	}
 }
+
+func TestOfflineImportRequiresQuiescenceAndApply(t *testing.T) {
+	for _, flags := range [][]string{nil, {"--apply"}, {"--source-quiescent"}} {
+		dir := filepath.Join(t.TempDir(), "missing")
+		root := createRootCommand(context.Background(), &Input{}, "test")
+		var out bytes.Buffer
+		root.SetOut(&out)
+		args := []string{"cache", "import", "--cache-server-path", dir, "--from", t.TempDir(), "--namespace", "repo", "--max-bytes", "80"}
+		root.SetArgs(append(args, flags...))
+		require.ErrorContains(t, root.Execute(), "source-quiescent")
+		require.Empty(t, out.String())
+		_, err := os.Stat(dir)
+		require.True(t, os.IsNotExist(err))
+	}
+}
