@@ -82,6 +82,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -526,9 +527,40 @@ func (r *artifactV4Routes) finalizeArtifact(ctx *ArtifactContext) {
 	if ok := r.parseProtbufBody(ctx, &req); !ok {
 		return
 	}
-	_, _, ok := validateRunIDV4(ctx, req.WorkflowRunBackendId)
+	_, runID, ok := validateRunIDV4(ctx, req.WorkflowRunBackendId)
 	if !ok {
 		return
+	}
+	archivePath := safeResolve(safeResolve(safeResolve(r.baseDir, fmt.Sprint(runID)), req.Name), req.Name+".zip")
+	archive, err := r.rfs.Open(archivePath)
+	if err != nil {
+		ctx.Error(http.StatusBadRequest, "missing archive")
+		return
+	}
+	defer archive.Close()
+	info, err := archive.Stat()
+	if err != nil {
+		ctx.Error(http.StatusInternalServerError, err)
+		return
+	}
+	if info.Size() != req.Size {
+		ctx.Error(http.StatusBadRequest, "archive size mismatch")
+		return
+	}
+	if declared := req.GetHash().GetValue(); declared != "" {
+		if !strings.HasPrefix(declared, "sha256:") {
+			ctx.Error(http.StatusBadRequest, "unsupported archive hash")
+			return
+		}
+		hash := sha256.New()
+		if _, err := io.Copy(hash, archive); err != nil {
+			ctx.Error(http.StatusInternalServerError, err)
+			return
+		}
+		if !strings.EqualFold(strings.TrimPrefix(declared, "sha256:"), hex.EncodeToString(hash.Sum(nil))) {
+			ctx.Error(http.StatusBadRequest, "archive hash mismatch")
+			return
+		}
 	}
 
 	respData := FinalizeArtifactResponse{
@@ -569,7 +601,8 @@ func (r *artifactV4Routes) listArtifacts(ctx *ArtifactContext) {
 				WorkflowJobRunBackendId: req.WorkflowJobRunBackendId,
 				Size:                    0,
 			}
-			if info, err := entry.Info(); err == nil {
+			archivePath := safeResolve(safeResolve(safePath, entry.Name()), entry.Name()+".zip")
+			if info, err := fs.Stat(r.rfs, archivePath); err == nil {
 				data.Size = info.Size()
 				data.CreatedAt = timestamppb.New(info.ModTime())
 			}
