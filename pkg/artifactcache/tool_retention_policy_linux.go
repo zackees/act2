@@ -50,6 +50,11 @@ func retainToolStore(ctx context.Context, root string, policy ToolRetentionPolic
 		report.fail(err)
 		return report
 	}
+	pins, err := readToolRecoveryPins(ctx, root, time.Now().UTC())
+	if err != nil {
+		report.fail(err)
+		return report
+	}
 	report.Before = auditToolStoreUsageLocked(ctx, root, policy.MaxEntries)
 	report.After = report.Before
 	if report.Before.Partial {
@@ -72,16 +77,16 @@ func retainToolStore(ctx context.Context, root string, policy ToolRetentionPolic
 		report.fail(fmt.Errorf("stage retention incomplete: %s", report.StageRetention.Error))
 		return report
 	}
-	report = sweepToolGenerations(ctx, root, policy, selection, candidates, report)
+	report = sweepToolGenerations(ctx, root, policy, selection, candidates, pins, report)
 	if report.Partial {
 		return report
 	}
 	return sweepToolObjects(ctx, root, policy, objects, report)
 }
 
-func sweepToolGenerations(ctx context.Context, root string, policy ToolRetentionPolicy, selection ToolGenerationSelection, candidates []toolRetentionCandidate, report ToolRetentionReport) ToolRetentionReport {
+func sweepToolGenerations(ctx context.Context, root string, policy ToolRetentionPolicy, selection ToolGenerationSelection, candidates []toolRetentionCandidate, pins map[string]bool, report ToolRetentionReport) ToolRetentionReport {
 	for _, candidate := range candidates {
-		if candidate.id == selection.ID {
+		if candidate.id == selection.ID || pins[candidate.id] {
 			report.ProtectedGenerations = append(report.ProtectedGenerations, candidate.id)
 			continue
 		}
@@ -92,7 +97,7 @@ func sweepToolGenerations(ctx context.Context, root string, policy ToolRetention
 			report.fail(err)
 			break
 		}
-		err := retireToolGenerationLocked(ctx, root, candidate.id, policy.MaxPayloadBytes)
+		err := retireToolGenerationWithPinsLocked(ctx, root, candidate.id, policy.MaxPayloadBytes, pins)
 		if errors.Is(err, bboltErrors.ErrTimeout) {
 			report.ProtectedGenerations = append(report.ProtectedGenerations, candidate.id)
 			continue
