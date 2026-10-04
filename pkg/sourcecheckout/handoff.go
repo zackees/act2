@@ -23,7 +23,9 @@ type WriterAuthority interface {
 	ApprovedBaseline(context.Context, string, string) (BaselineGrant, error)
 }
 type BaselineGrant struct {
-	Source                                                          FrozenSourceIdentity
+	Source FrozenSourceIdentity
+	// GitRoot is independent controller-provided Git authority, never cached .git.
+	GitRoot                                                         string
 	CacheNamespace, OutputIdentity, PayloadSHA256, MaterializedRoot string
 	PolicyCommit, WorkflowCommit                                    string
 	RunID, Attempt, JobID                                           int64
@@ -36,12 +38,13 @@ type BaselineCandidate struct {
 	PayloadSHA256 string
 }
 
-// PreparedHandoff carries independently verified inventories, but is not an
-// apply operation. Authoritative .git and compatible output transport are still
-// required before a production warm checkout can consume it.
+// PreparedHandoff carries independently verified inventories for source-only
+// application. Authoritative .git restoration is separate, and compatible output
+// transport remains required before production warm checkout activation.
 type PreparedHandoff struct {
 	baseline, requested VerifiedCheckout
 	grant               BaselineGrant
+	limits              Limits
 	ready               bool
 }
 
@@ -73,7 +76,7 @@ func PrepareHandoff(ctx context.Context, candidate BaselineCandidate, source Sou
 	if err != nil {
 		return PreparedHandoff{}, err
 	}
-	donor, err := ReadFrozenCheckout(receipt.GitRoot, grant.MaterializedRoot, grant.Source, limits)
+	donor, err := ReadFrozenCheckout(grant.GitRoot, grant.MaterializedRoot, grant.Source, limits)
 	if err != nil {
 		return PreparedHandoff{}, err
 	}
@@ -87,7 +90,8 @@ func PrepareHandoff(ctx context.Context, candidate BaselineCandidate, source Sou
 	}
 	next.envelope.Binding.OutputIdentity = receipt.OutputIdentity
 	next.envelope.ContentID = envelopeID(next.envelope)
-	return PreparedHandoff{baseline: donor, requested: next, grant: grant, ready: true}, nil
+	limits.Protected = append([]string(nil), limits.Protected...)
+	return PreparedHandoff{baseline: donor, requested: next, grant: grant, limits: limits, ready: true}, nil
 }
 func validateGrant(grant BaselineGrant, receipt SourceReceipt, candidate BaselineCandidate) error {
 	if grant.CacheNamespace != receipt.CacheNamespace || grant.OutputIdentity != receipt.OutputIdentity {
@@ -102,7 +106,23 @@ func validateGrant(grant BaselineGrant, receipt SourceReceipt, candidate Baselin
 	if grant.MaterializedRoot == "" || grant.MaterializedRoot == receipt.MaterializedRoot || grant.MaterializedRoot == receipt.GitRoot {
 		return fmt.Errorf("invalid baseline materialization")
 	}
+	if err := validateRoots(grant.GitRoot, grant.MaterializedRoot); err != nil {
+		return fmt.Errorf("baseline Git authority must be independent of cached source: %w", err)
+	}
 	return validateFrozenIdentity(grant.Source)
+}
+
+// Apply uses only the roots and limits already independently authenticated by
+// PrepareHandoff. It does not restore Git metadata or approve output transport.
+// A mutation error requires discarding the owned workspace before cold checkout.
+func (handoff PreparedHandoff) Apply(ctx context.Context, destination string) (Result, error) {
+	if !handoff.ready || destination != handoff.baseline.root {
+		return Result{}, fmt.Errorf("source handoff is not approved for this destination")
+	}
+	if err := ctx.Err(); err != nil {
+		return Result{}, err
+	}
+	return Reconcile(destination, handoff.requested.root, handoff.baseline.envelope, handoff.requested.envelope, handoff.limits)
 }
 func digestString(value string) bool {
 	if len(value) != 64 {

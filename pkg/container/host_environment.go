@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-git/go-billy/v5/helper/polyfill"
@@ -31,9 +32,15 @@ type HostEnvironment struct {
 	ToolCache string
 	Workdir   string
 	ActPath   string
-	CleanUp   func()
-	StdOut    io.Writer
-	StdErr    io.Writer
+	// OwnedRoot is the controller-owned parent of this private initial workspace.
+	OwnedRoot string
+	// SourceReceiver is a trusted controller injection, never a workflow decoder.
+	SourceReceiver SourceCheckoutReceiver
+	sourceCheckoutMu sync.Mutex
+	sourceCheckoutAttempted bool
+	CleanUp func()
+	StdOut io.Writer
+	StdErr io.Writer
 	// JSON logging needs the original pipes; a PTY merges them.
 	SeparateStreams bool
 }
@@ -93,6 +100,14 @@ func (e *HostEnvironment) CopyTarStream(ctx context.Context, destPath string, ta
 
 func (e *HostEnvironment) CopyDir(destPath string, srcPath string, useGitIgnore bool) common.Executor {
 	return func(ctx context.Context) error {
+		if e.SourceReceiver != nil {
+			e.sourceCheckoutMu.Lock()
+			defer e.sourceCheckoutMu.Unlock()
+			handled, err := e.receiveSourceCheckout(ctx, destPath, srcPath, useGitIgnore)
+			if err != nil || handled {
+				return err
+			}
+		}
 		logger := common.Logger(ctx)
 		srcPrefix := filepath.Dir(srcPath)
 		if !strings.HasSuffix(srcPrefix, string(filepath.Separator)) {

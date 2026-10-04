@@ -30,7 +30,7 @@ func (authority fixtureWriterAuthority) ApprovedBaseline(_ context.Context, name
 	return authority.grant, nil
 }
 func TestHandoffRequiresIndependentWriterAndTransport(t *testing.T) {
-	for _, scenario := range []string{"ready", "unapproved", "transport", "output", "source-seal", "writer-receipt", "missing-authority", "poisoned-baseline"} {
+	for _, scenario := range []string{"ready", "unapproved", "transport", "output", "source-seal", "writer-receipt", "missing-authority", "poisoned-baseline", "missing-donor-git", "cached-donor-git"} {
 		t.Run(scenario, func(t *testing.T) {
 			root, repo, original := gitFixture(t, "old")
 			baseline := t.TempDir()
@@ -44,7 +44,7 @@ func TestHandoffRequiresIndependentWriterAndTransport(t *testing.T) {
 			requested.Dirty = true
 			requested.OriginalCommit = original.OriginalCommit
 			receipt := SourceReceipt{Identity: requested, GitRoot: root, MaterializedRoot: root, CacheNamespace: "repository-source-v1", OutputIdentity: output}
-			grant := BaselineGrant{Source: original, CacheNamespace: receipt.CacheNamespace, OutputIdentity: output, PayloadSHA256: strings.Repeat("b", 64), MaterializedRoot: baseline, PolicyCommit: original.OriginalCommit, WorkflowCommit: original.OriginalCommit, RunID: 1, Attempt: 1, JobID: 2}
+			grant := BaselineGrant{Source: original, GitRoot: root, CacheNamespace: receipt.CacheNamespace, OutputIdentity: output, PayloadSHA256: strings.Repeat("b", 64), MaterializedRoot: baseline, PolicyCommit: original.OriginalCommit, WorkflowCommit: original.OriginalCommit, RunID: 1, Attempt: 1, JobID: 2}
 			candidate := BaselineCandidate{Envelope: envelope, PayloadSHA256: grant.PayloadSHA256}
 			var source SourceAuthority = fixtureSourceAuthority{receipt: receipt}
 			writer := fixtureWriterAuthority{grant: grant}
@@ -62,6 +62,10 @@ func TestHandoffRequiresIndependentWriterAndTransport(t *testing.T) {
 				writer.grant.RunID = 0
 			case "missing-authority":
 				source = nil
+			case "missing-donor-git":
+				writer.grant.GitRoot = ""
+			case "cached-donor-git":
+				writer.grant.GitRoot = baseline
 			case "poisoned-baseline":
 				require.NoError(t, os.WriteFile(filepath.Join(baseline, "source.rs"), []byte("forged"), 0600))
 			}
@@ -70,10 +74,27 @@ func TestHandoffRequiresIndependentWriterAndTransport(t *testing.T) {
 				require.NoError(t, err)
 				assert.True(t, handoff.Ready())
 				assert.Equal(t, requested.CheckoutCommit, handoff.Requested().Binding.SourceCommit)
+				ctx, cancel := context.WithCancel(context.Background())
+				cancel()
+				_, err = handoff.Apply(ctx, baseline)
+				assert.ErrorIs(t, err, context.Canceled)
+				_, err = handoff.PrepareGit(ctx, filepath.Dir(baseline))
+				assert.ErrorIs(t, err, context.Canceled)
+				body, err := os.ReadFile(filepath.Join(baseline, "source.rs"))
+				require.NoError(t, err)
+				assert.Equal(t, "old", string(body))
 			} else {
 				assert.Error(t, err)
 				assert.False(t, handoff.Ready())
 			}
 		})
 	}
+}
+
+func TestZeroHandoffNeverAppliesOrRestoresGit(t *testing.T) {
+	var handoff PreparedHandoff
+	_, err := handoff.Apply(context.Background(), t.TempDir())
+	assert.Error(t, err)
+	_, err = handoff.PrepareGit(context.Background(), t.TempDir())
+	assert.Error(t, err)
 }

@@ -1,8 +1,9 @@
 # Content-aware source reconciliation
 
-This package is an unwired filesystem primitive for CACHE-028. It does not change
-act2 checkout behavior, authenticate a cache writer, promote a PR cache, or supply
-a source archive. The caller must own separate writable destination and staging
+This package provides source reconciliation for CACHE-028. An optional typed
+controller receiver can use it through the initial owned `HostEnvironment.CopyDir`
+call. No production receiver or authority provider is implemented; default checkout
+remains ordinary. This does not promote a PR cache or supply a source archive. The caller must own separate writable destination and staging
 roots exclusively throughout reconciliation; concurrent mutation is unsupported.
 
 `BuildEnvelope` accepts an explicit tracked source inventory. Its versioned typed
@@ -48,8 +49,15 @@ and materialization grants. The interfaces require a trusted receiver; no
 production authority provider is implemented. A candidate's content seal cannot
 approve a writer or authenticate an archive. The container preparation method
 also binds these receipts to the actual frozen source and private writable
-workspace. Preparation is read-only. `HostEnvironment.CopyDir` still performs
-ordinary checkout on every production call, including unsupported or missing
-handoffs. Authoritative `.git` replacement, bounded archive transport, compatible
+workspace. Preparation is read-only. An explicitly injected receiver may admit only the
+initial owned workspace, with independent requested and donor Git authority.
+Requested objects and refs are bounded and staged separately before reconciliation;
+Git restoration builds safe configuration and a fresh index, excluding source hooks,
+filters, remotes and cached Git metadata. Rejected or partially applied donors are
+discarded only inside the owned workspace before the actual cold copy. Nested,
+unowned and Git-ignore profiles retain ordinary copying.
+
+Real Bosn issuer grants, bounded authenticated archive materialization, compatible
 Cargo/Dylint output delivery, and physical PR-to-main promotion remain required
-before activation; this API slice does not complete CACHE-028.
+before activation; this API slice does not complete CACHE-028. Receiver test
+issuers are fixtures, never production authorization.

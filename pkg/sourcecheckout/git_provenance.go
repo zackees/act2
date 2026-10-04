@@ -35,6 +35,7 @@ type FrozenSourceIdentity struct {
 // Its Git authority and materialized source roots are deliberately separate.
 type VerifiedCheckout struct {
 	root     string
+	gitRoot  string
 	envelope Envelope
 	identity FrozenSourceIdentity
 	verified bool
@@ -109,7 +110,7 @@ func ReadFrozenCheckout(gitRoot, materializedRoot string, expected FrozenSourceI
 	if err := validateLinks(materializedRoot, "", Envelope{}, envelope, l); err != nil {
 		return VerifiedCheckout{}, err
 	}
-	return VerifiedCheckout{root: materializedRoot, envelope: envelope, identity: expected, verified: true}, nil
+	return VerifiedCheckout{root: materializedRoot, gitRoot: gitRoot, envelope: envelope, identity: expected, verified: true}, nil
 }
 
 func (reader *gitInventoryReader) encoded(hash plumbing.Hash, kind plumbing.ObjectType, limit int64) (plumbing.EncodedObject, []byte, error) {
