@@ -165,7 +165,7 @@ func serveImmutableUploadPack(t *testing.T, gitPath, dir string, w http.Response
 	args = append(args, filepath.Join(dir, "fixture.git"))
 	command := exec.CommandContext(r.Context(), gitPath, args...)
 	command.Dir = dir
-	command.Env = []string{"PATH=" + os.Getenv("PATH"), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_PROTOCOL=version=0"}
+	command.Env = []string{"PATH=" + os.Getenv("PATH"), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_PROTOCOL=version=0"}
 	command.Stdin, command.Stdout, command.Stderr = r.Body, w, io.Discard
 	if err := command.Run(); err != nil && r.Context().Err() == nil {
 		t.Errorf("fixture upload-pack failed: %v", err)
