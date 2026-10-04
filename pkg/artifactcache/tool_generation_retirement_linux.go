@@ -31,6 +31,18 @@ func retireToolGeneration(ctx context.Context, root, id string, maxBytes int64) 
 
 // Caller holds the original catalog writer throughout retirement.
 func retireToolGenerationLocked(ctx context.Context, root, id string, maxBytes int64) error {
+	pins, err := readToolRecoveryPins(ctx, root, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	return retireToolGenerationWithPinsLocked(ctx, root, id, maxBytes, pins)
+}
+
+func retireToolGenerationWithPinsLocked(ctx context.Context, root, id string, maxBytes int64, pins map[string]bool) error {
+	if pins[id] {
+		return fmt.Errorf("tool generation is protected by pending recovery")
+	}
+
 	selection, err := readToolGenerationSelection(root)
 	if err != nil {
 		return err

@@ -50,6 +50,13 @@ func retainToolStore(ctx context.Context, root string, policy ToolRetentionPolic
 		report.fail(err)
 		return report
 	}
+	now := time.Now().UTC()
+	records, err := readToolRecoveryPinRecords(ctx, root, now)
+	if err != nil {
+		report.fail(err)
+		return report
+	}
+	pins := protectedToolRecoveryPins(records, now)
 	report.Before = auditToolStoreUsageLocked(ctx, root, policy.MaxEntries)
 	report.After = report.Before
 	if report.Before.Partial {
@@ -66,22 +73,27 @@ func retainToolStore(ctx context.Context, root string, policy ToolRetentionPolic
 		report.fail(err)
 		return report
 	}
+	report = expireToolRecoveryPinsLocked(ctx, catalog, root, now, records, policy.MaxCandidates, report)
+	report = auditToolRecoveryPinExpiry(ctx, root, policy.MaxEntries, report)
+	if report.Partial {
+		return report
+	}
 	report.StageRetention = retireToolStagesLocked(ctx, catalog, root, policy.ExpireBefore, policy.MaxEntries)
 	report.After = report.StageRetention.After
 	if report.StageRetention.Partial {
 		report.fail(fmt.Errorf("stage retention incomplete: %s", report.StageRetention.Error))
 		return report
 	}
-	report = sweepToolGenerations(ctx, root, policy, selection, candidates, report)
+	report = sweepToolGenerations(ctx, root, policy, selection, candidates, pins, report)
 	if report.Partial {
 		return report
 	}
 	return sweepToolObjects(ctx, root, policy, objects, report)
 }
 
-func sweepToolGenerations(ctx context.Context, root string, policy ToolRetentionPolicy, selection ToolGenerationSelection, candidates []toolRetentionCandidate, report ToolRetentionReport) ToolRetentionReport {
+func sweepToolGenerations(ctx context.Context, root string, policy ToolRetentionPolicy, selection ToolGenerationSelection, candidates []toolRetentionCandidate, pins map[string]bool, report ToolRetentionReport) ToolRetentionReport {
 	for _, candidate := range candidates {
-		if candidate.id == selection.ID {
+		if candidate.id == selection.ID || pins[candidate.id] {
 			report.ProtectedGenerations = append(report.ProtectedGenerations, candidate.id)
 			continue
 		}
@@ -92,7 +104,7 @@ func sweepToolGenerations(ctx context.Context, root string, policy ToolRetention
 			report.fail(err)
 			break
 		}
-		err := retireToolGenerationLocked(ctx, root, candidate.id, policy.MaxPayloadBytes)
+		err := retireToolGenerationWithPinsLocked(ctx, root, candidate.id, policy.MaxPayloadBytes, pins)
 		if errors.Is(err, bboltErrors.ErrTimeout) {
 			report.ProtectedGenerations = append(report.ProtectedGenerations, candidate.id)
 			continue
@@ -155,4 +167,14 @@ func toolRetentionCandidatesAt(directory string, bound int) ([]toolRetentionCand
 		return candidates[i].published.Before(candidates[j].published)
 	})
 	return candidates, nil
+}
+
+func auditToolRecoveryPinExpiry(ctx context.Context, root string, maxEntries int, report ToolRetentionReport) ToolRetentionReport {
+	if report.ExpiredPins > 0 || report.Partial {
+		report.After = auditToolStoreUsageLocked(ctx, root, maxEntries)
+		if report.After.Partial {
+			report.fail(fmt.Errorf("post-expiry inventory incomplete: %s", report.After.Error))
+		}
+	}
+	return report
 }
