@@ -105,7 +105,7 @@ type immutableHTTP struct {
 
 func newImmutableHTTP(t *testing.T, fixture immutableFixture) *immutableHTTP {
 	t.Helper()
-	gitPath, err := exec.LookPath("git")
+	_, err := exec.LookPath("git")
 	require.NoError(t, err)
 	state := &immutableHTTP{}
 	state.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -139,7 +139,7 @@ func newImmutableHTTP(t *testing.T, fixture immutableFixture) *immutableHTTP {
 			}
 			r.Body = io.NopCloser(bytes.NewReader(body))
 		}
-		serveImmutableUploadPack(t, gitPath, fixture.dir, w, r)
+		serveImmutableUploadPack(t, fixture.dir, w, r)
 	}))
 	t.Cleanup(state.server.Close)
 	return state
@@ -148,23 +148,22 @@ func newImmutableHTTP(t *testing.T, fixture immutableFixture) *immutableHTTP {
 // Stream the real Git smart-HTTP protocol directly, without CGI or a shell.
 // The command runs only in the isolated fixture runner, with no inherited Git
 // configuration, alternate object store, hooks or HTTP credential environment.
-func serveImmutableUploadPack(t *testing.T, gitPath, dir string, w http.ResponseWriter, r *http.Request) {
+func serveImmutableUploadPack(t *testing.T, dir string, w http.ResponseWriter, r *http.Request) {
 	t.Helper()
-	args := []string{"upload-pack", "--stateless-rpc"}
+	var command *exec.Cmd
 	switch {
 	case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/info/refs") && r.URL.Query().Get("service") == "git-upload-pack":
 		w.Header().Set("Content-Type", "application/x-git-upload-pack-advertisement")
 		_, _ = fmt.Fprint(w, "001e# service=git-upload-pack\n0000")
-		args = append(args, "--advertise-refs")
+		command = exec.CommandContext(r.Context(), "git", "upload-pack", "--stateless-rpc", "--advertise-refs", ".")
 	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/git-upload-pack"):
 		w.Header().Set("Content-Type", "application/x-git-upload-pack-result")
+		command = exec.CommandContext(r.Context(), "git", "upload-pack", "--stateless-rpc", ".")
 	default:
 		http.Error(w, "unsupported fixture Git request", http.StatusNotFound)
 		return
 	}
-	args = append(args, filepath.Join(dir, "fixture.git"))
-	command := exec.CommandContext(r.Context(), gitPath, args...)
-	command.Dir = dir
+	command.Dir = filepath.Join(dir, "fixture.git")
 	command.Env = []string{"PATH=" + os.Getenv("PATH"), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_PROTOCOL=version=0"}
 	command.Stdin, command.Stdout, command.Stderr = r.Body, w, io.Discard
 	if err := command.Run(); err != nil && r.Context().Err() == nil {
