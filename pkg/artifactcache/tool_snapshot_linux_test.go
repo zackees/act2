@@ -4,6 +4,7 @@ package artifactcache
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -130,4 +131,24 @@ func TestToolSnapshotRejectsExcessiveDirectoryDepth(t *testing.T) {
 	require.False(t, report.Published)
 	_, err := os.Stat(store)
 	require.True(t, os.IsNotExist(err))
+}
+
+func TestToolSnapshotReplaysPublicationAfterLostDurabilityAcknowledgement(t *testing.T) {
+	source, store := completedToolFixture(t)
+	first := publishToolSnapshotWithSync(context.Background(), source, store, 100, func(string) error {
+		return fmt.Errorf("injected directory sync failure after rename")
+	})
+	require.True(t, first.Partial)
+	require.True(t, first.Published, "renamed objects must remain visible in an uncertain durability report")
+	require.False(t, first.Reused)
+	require.Empty(t, first.PendingStage)
+	require.Contains(t, first.Error, "sync failure")
+	data, err := os.ReadFile(filepath.Join(first.Destination, "tree", "tool"))
+	require.NoError(t, err)
+	require.Equal(t, "warm", string(data))
+	retry := PublishToolSnapshot(context.Background(), source, store, 100)
+	require.False(t, retry.Partial, retry.Error)
+	require.True(t, retry.Published)
+	require.True(t, retry.Reused)
+	require.Equal(t, first.ID, retry.ID)
 }

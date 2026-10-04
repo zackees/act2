@@ -43,7 +43,13 @@ type toolEntry struct {
 	Link   string `json:"link,omitempty"`
 }
 
-func publishToolSnapshot(ctx context.Context, source, root string, maxBytes int64) (report ToolSnapshotReport) {
+func publishToolSnapshot(ctx context.Context, source, root string, maxBytes int64) ToolSnapshotReport {
+	return publishToolSnapshotWithSync(ctx, source, root, maxBytes, syncToolDirectory)
+}
+
+// A per-call sync operation permits testing the uncertain state after rename;
+// it does not alter stage validation or introduce shared mutable test hooks.
+func publishToolSnapshotWithSync(ctx context.Context, source, root string, maxBytes int64, syncRoot func(string) error) (report ToolSnapshotReport) {
 	report = ToolSnapshotReport{SchemaVersion: 1, Source: source}
 	ctx, cancel := context.WithTimeout(ctx, 180*time.Second)
 	defer cancel()
@@ -84,7 +90,7 @@ func publishToolSnapshot(ctx context.Context, source, root string, maxBytes int6
 			return report
 		}
 		report.Published, report.Reused = true, true
-		if err = syncToolDirectory(root); err != nil {
+		if err = syncRoot(root); err != nil {
 			report.fail(err)
 		}
 		return report
@@ -121,7 +127,7 @@ func publishToolSnapshot(ctx context.Context, source, root string, maxBytes int6
 		return report
 	}
 	report.Published, report.PendingStage = true, ""
-	if err = syncToolDirectory(root); err != nil {
+	if err = syncRoot(root); err != nil {
 		report.fail(err)
 	}
 	return report
