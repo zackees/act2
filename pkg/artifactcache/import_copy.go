@@ -67,6 +67,7 @@ func copyVerifiedArchive(ctx context.Context, source, destination string, size i
 }
 
 func archiveChecksum(ctx context.Context, path string, size int64) (string, error) {
+	// #nosec G703 -- Callers validate canonical source/destination paths before verified archive transfer.
 	file, err := os.Open(path)
 	if err != nil {
 		return "", err
