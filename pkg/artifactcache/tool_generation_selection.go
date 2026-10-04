@@ -12,6 +12,9 @@ type ToolGenerationSelection struct {
 // ToolGenerationUpdateReport separates closed generation publication from
 // selection. Selected can remain true with Partial after a final directory-sync
 // failure; retry validates existing data instead of rebuilding from zero.
+// PendingSelection names an owned private directory when selection staging or
+// its cleanup is uncertain. RetireToolStages can expire it under catalog exclusion
+// without removing the selected pointer or generation.
 type ToolGenerationUpdateReport struct {
 	SchemaVersion    int                `json:"schema_version"`
 	Generation       ToolSnapshotReport `json:"generation"`
