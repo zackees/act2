@@ -227,4 +227,10 @@ func TestGitMutableBranchAndTagAcquisitionRemainFresh(t *testing.T) {
 	input.Ref, input.Dir = "fixture-tag", tagDir
 	require.NoError(t, NewGitCloneExecutor(input)(context.Background()))
 	requireImmutableCheckout(t, tagDir, fixture.commits[7], "revision-07\n")
+	beforeTagRefresh, _ := server.snapshot()
+	require.NoError(t, fixture.repo.Storer.SetReference(plumbing.NewHashReference("refs/tags/fixture-tag", newHead)))
+	require.NoError(t, NewGitCloneExecutor(input)(context.Background()))
+	afterTagRefresh, _ := server.snapshot()
+	require.Greater(t, afterTagRefresh, beforeTagRefresh, "a warmed named tag must retain its existing remote refresh semantics")
+	requireImmutableCheckout(t, tagDir, newHead, "new branch head\n")
 }
