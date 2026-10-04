@@ -21,6 +21,10 @@ directory transitions remove only validated empty directories. Unlisted outputs
 and Git metadata are protected. The default target directory is always excluded;
 callers must declare additional output roots in `Limits.Protected`.
 
+Link chains resolve against the complete requested source inventory and actual
+staging/destination state before writes. Directory targets cannot expose unlisted
+children. Resolution is bounded and interprets `..` after expanding each alias.
+
 No timestamps are replayed. Changed and added files get normal materialization
 times. Operating-system failures during application can leave a partial source
 merge; callers must discard such a tree rather than compile it. Cache corruption,

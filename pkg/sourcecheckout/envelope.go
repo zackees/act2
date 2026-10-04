@@ -206,48 +206,59 @@ func BuildEnvelope(root string, paths []string, l Limits) (Envelope, error) {
 		if err := allowed(name, l); err != nil {
 			return Envelope{}, err
 		}
-		if err := realParents(root, name); err != nil {
-			return Envelope{}, err
-		}
-		filename := filepath.Join(root, filepath.FromSlash(name))
-		info, err := os.Lstat(filename)
+		entry, err := buildEntry(root, name, l, l.TotalBytes-total)
 		if err != nil {
 			return Envelope{}, err
 		}
-		entry := Entry{Path: name, Size: info.Size(), Executable: info.Mode()&0111 != 0}
-		if entry.Size < 0 || entry.Size > l.FileBytes || entry.Size > l.TotalBytes-total {
-			return Envelope{}, fmt.Errorf("source byte bound exceeded")
-		}
 		total += entry.Size
-		if info.Mode().IsRegular() {
-			data, err := readFile(filename, l.FileBytes)
-			if err != nil {
-				return Envelope{}, err
-			}
-			sum := sha256.Sum256(data)
-			entry.Kind = "file"
-			entry.SHA256 = hex.EncodeToString(sum[:])
-		} else if info.Mode()&os.ModeSymlink != 0 {
-			entry.Kind = "symlink"
-			entry.Executable = false
-			entry.Link, err = os.Readlink(filename)
-			if err != nil {
-				return Envelope{}, err
-			}
-			if !safeLink(name, entry.Link) {
-				return Envelope{}, fmt.Errorf("unsafe source symlink")
-			}
-			if err := allowed(path.Clean(path.Join(path.Dir(name), entry.Link)), l); err != nil {
-				return Envelope{}, err
-			}
-		} else {
-			return Envelope{}, fmt.Errorf("unsupported source type")
-		}
 		result.Entries = append(result.Entries, entry)
 	}
 	result.ContentID = envelopeID(result)
 	if err := validateEnvelope(result, l); err != nil {
 		return Envelope{}, err
 	}
+	if err := validateLinks(root, "", Envelope{}, result, l); err != nil {
+		return Envelope{}, err
+	}
 	return result, nil
+}
+
+func buildEntry(root, name string, l Limits, remaining int64) (Entry, error) {
+	if err := realParents(root, name); err != nil {
+		return Entry{}, err
+	}
+	filename := filepath.Join(root, filepath.FromSlash(name))
+	info, err := os.Lstat(filename)
+	if err != nil {
+		return Entry{}, err
+	}
+	entry := Entry{Path: name, Size: info.Size(), Executable: info.Mode()&0111 != 0}
+	if entry.Size < 0 || entry.Size > l.FileBytes || entry.Size > remaining {
+		return Entry{}, fmt.Errorf("source byte bound exceeded")
+	}
+	if info.Mode().IsRegular() {
+		data, err := readFile(filename, l.FileBytes)
+		if err != nil {
+			return Entry{}, err
+		}
+		sum := sha256.Sum256(data)
+		entry.Kind = "file"
+		entry.SHA256 = hex.EncodeToString(sum[:])
+	} else if info.Mode()&os.ModeSymlink != 0 {
+		entry.Kind = "symlink"
+		entry.Executable = false
+		entry.Link, err = os.Readlink(filename)
+		if err != nil {
+			return Entry{}, err
+		}
+		if !safeLink(name, entry.Link) {
+			return Entry{}, fmt.Errorf("unsafe source symlink")
+		}
+		if err := allowed(path.Clean(path.Join(path.Dir(name), entry.Link)), l); err != nil {
+			return Entry{}, err
+		}
+	} else {
+		return Entry{}, fmt.Errorf("unsupported source type")
+	}
+	return entry, nil
 }

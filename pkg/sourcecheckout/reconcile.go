@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode"
 )
 
 type preparedEntry struct {
@@ -33,20 +34,19 @@ func validateEnvelope(e Envelope, l Limits) error {
 		if entry.Path <= previous || entry.Size < 0 || entry.Size > l.FileBytes || entry.Size > l.TotalBytes-total {
 			return fmt.Errorf("unordered or oversized source inventory")
 		}
-		for parent := filepath.ToSlash(filepath.Dir(entry.Path)); parent != "."; parent = filepath.ToSlash(filepath.Dir(parent)) {
-			if seen[strings.ToLower(parent)] {
-				return fmt.Errorf("conflicting source paths")
-			}
-		}
-		if seen[strings.ToLower(entry.Path)] {
+
+		if seen[foldSourcePath(entry.Path)] {
 			return fmt.Errorf("source path case collision")
 		}
-		seen[strings.ToLower(entry.Path)] = true
+		seen[foldSourcePath(entry.Path)] = true
 		previous = entry.Path
 		total += entry.Size
 		if err := validateEntry(entry, l); err != nil {
 			return err
 		}
+	}
+	if err := validateCompleteAncestors(e.Entries, seen); err != nil {
+		return err
 	}
 	if envelopeID(e) != e.ContentID {
 		return fmt.Errorf("source envelope identity mismatch")
@@ -254,6 +254,9 @@ func Reconcile(destination, staging string, previous, next Envelope, l Limits) (
 	if err := preflightDestination(destination, previous, next, old, wanted); err != nil {
 		return result, err
 	}
+	if err := validateLinks(staging, destination, previous, next, l); err != nil {
+		return result, err
+	}
 	return applyPrepared(destination, previous, wanted, prepared)
 }
 
@@ -411,4 +414,37 @@ func donorDirectories(previous Envelope) (map[string]bool, error) {
 		}
 	}
 	return result, nil
+}
+
+func validateCompleteAncestors(entries []Entry, complete map[string]bool) error {
+	directories := make(map[string]string)
+	for _, entry := range entries {
+		for parent := path.Dir(entry.Path); parent != "."; parent = path.Dir(parent) {
+			folded := foldSourcePath(parent)
+			if original, seen := directories[folded]; seen && original != parent {
+				return fmt.Errorf("source directory case collision")
+			}
+			directories[folded] = parent
+			if len(directories) > 10000 {
+				return fmt.Errorf("source directory inventory exceeds bound")
+			}
+			if complete[folded] {
+				return fmt.Errorf("conflicting source paths")
+			}
+		}
+	}
+	return nil
+}
+
+// Canonicalize the same Unicode simple-fold classes used by strings.EqualFold.
+func foldSourcePath(name string) string {
+	return strings.Map(func(value rune) rune {
+		smallest := value
+		for folded := unicode.SimpleFold(value); folded != value; folded = unicode.SimpleFold(folded) {
+			if folded < smallest {
+				smallest = folded
+			}
+		}
+		return smallest
+	}, name)
 }
