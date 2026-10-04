@@ -122,6 +122,9 @@ func TestGitRefreshCancellation(t *testing.T) {
 			defer server.Close()
 			defer close(release)
 			input := fixture.input(t, server.URL)
+			// Refresh cancellation exercises a mutable branch. A verified full-SHA
+			// warm hit should not perform either network operation in the first place.
+			input.Ref = "master"
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			done := make(chan error, 1)

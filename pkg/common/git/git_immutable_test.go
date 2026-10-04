@@ -97,6 +97,28 @@ func TestGitImmutableCanceledAcquisition(t *testing.T) {
 	requests, uploads := server.snapshot()
 	require.Zero(t, requests)
 	require.Empty(t, uploads)
+	_, err := os.Stat(dir)
+	require.ErrorIs(t, err, os.ErrNotExist, "canceled admission must not materialize a checkout")
+}
+
+func TestGitImmutableWarmCanceledAcquisitionDoesNotWrite(t *testing.T) {
+	fixture := newImmutableFixture(t)
+	server := newImmutableHTTP(t, fixture)
+	dir := filepath.Join(immutableFixtureDirectory(t), "checkout")
+	pin := fixture.commits[7]
+	input := NewGitCloneExecutorInput{URL: server.url(), Ref: pin.String(), Dir: dir}
+	require.NoError(t, NewGitCloneExecutor(input)(context.Background()))
+	file := filepath.Join(dir, "action.yml")
+	require.NoError(t, os.WriteFile(file, []byte("retain this modification\n"), 0o600))
+	before, _ := server.snapshot()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	require.ErrorIs(t, NewGitCloneExecutor(input)(ctx), context.Canceled)
+	after, _ := server.snapshot()
+	require.Equal(t, before, after)
+	contents, err := os.ReadFile(file)
+	require.NoError(t, err)
+	require.Equal(t, "retain this modification\n", string(contents), "cancellation must precede checkout/reset writes even on a warm hit")
 }
 
 func TestGitImmutableOriginMismatchNeverReusesPin(t *testing.T) {
