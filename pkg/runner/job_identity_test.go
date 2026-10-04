@@ -79,3 +79,46 @@ func TestJobIdentityBoundsCallerDepth(t *testing.T) {
 	root = &RunContext{Run: &model.Run{JobID: "nested"}, caller: &caller{runContext: root}}
 	assert.Nil(t, root.jobPath())
 }
+
+func TestPlannedJobIdentityIncludesCallerMatrix(t *testing.T) {
+	for _, target := range []string{"linux", "darwin"} {
+		t.Run(target, func(t *testing.T) {
+			parent := &RunContext{
+				Name:   "same display",
+				Run:    &model.Run{JobID: "caller", Workflow: &model.Workflow{Name: "root"}},
+				Matrix: map[string]interface{}{"os": target},
+			}
+			leaf := &RunContext{
+				Name: "same display", Config: &Config{JSONLogger: true},
+				Run:    &model.Run{JobID: "test", Workflow: &model.Workflow{Name: "child"}},
+				caller: &caller{runContext: parent},
+			}
+			err := runPlannedJob(context.Background(), leaf, nil, 0, func(*RunContext) (common.Executor, error) {
+				return func(ctx context.Context) error {
+					entry, ok := common.Logger(ctx).(*log.Entry)
+					if !assert.True(t, ok) {
+						return nil
+					}
+					encoded, formatErr := entry.Logger.Formatter.Format(entry)
+					if !assert.NoError(t, formatErr) {
+						return nil
+					}
+					var wire struct {
+						Identity []struct {
+							JobID  string            `json:"jobID"`
+							Matrix map[string]string `json:"matrix"`
+						} `json:"jobIdentity"`
+					}
+					assert.NoError(t, json.Unmarshal(encoded, &wire))
+					if assert.Len(t, wire.Identity, 2) {
+						assert.Equal(t, "caller", wire.Identity[0].JobID)
+						assert.Equal(t, target, wire.Identity[0].Matrix["os"])
+						assert.Equal(t, "test", wire.Identity[1].JobID)
+					}
+					return nil
+				}, nil
+			})
+			assert.NoError(t, err)
+		})
+	}
+}
