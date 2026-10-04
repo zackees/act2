@@ -20,15 +20,6 @@ const toolRecoveryPinLimit = 10000
 const toolRecoveryPinBytes = 1024
 const toolRecoveryPinLifetime = 24 * time.Hour
 
-// A protection request, never evidence of source ownership or quiescence.
-type ToolRecoveryPin struct {
-	SchemaVersion int       `json:"schema_version"`
-	Owner         string    `json:"owner"`
-	Generation    string    `json:"generation"`
-	CreatedAt     time.Time `json:"created_at"`
-	ExpiresAt     time.Time `json:"expires_at"`
-}
-
 func canonicalRecoveryID(id string) bool {
 	decoded, err := hex.DecodeString(id)
 	return err == nil && len(decoded) == 32 && hex.EncodeToString(decoded) == id
@@ -43,15 +34,24 @@ func (pin ToolRecoveryPin) validate() error {
 
 // The caller holds the original catalog writer. Malformed, oversized or
 // ambiguous records stop retirement; absence alone means no reservations.
-func readToolRecoveryPins(ctx context.Context, root string, now time.Time) (map[string]bool, error) {
-	protected := make(map[string]bool)
+func readToolRecoveryPinRecords(ctx context.Context, root string, now time.Time) (map[string]ToolRecoveryPin, error) {
+	records := make(map[string]ToolRecoveryPin)
+	verifiedGenerations := make(map[string]bool)
 	directory := filepath.Join(root, toolRecoveryPinDirectory)
 	info, err := os.Lstat(directory)
 	if os.IsNotExist(err) {
-		return protected, nil
+		return records, nil
 	}
 	if err != nil || !info.IsDir() {
 		return nil, fmt.Errorf("recovery pin namespace is invalid")
+	}
+	rootMount, err := toolMountID(root)
+	if err != nil {
+		return nil, err
+	}
+	pinMount, err := toolMountID(directory)
+	if err != nil || rootMount != pinMount {
+		return nil, fmt.Errorf("recovery pin namespace crosses mount boundary")
 	}
 	handle, err := os.Open(directory)
 	if err != nil {
@@ -103,10 +103,26 @@ func readToolRecoveryPins(ctx context.Context, root string, now time.Time) (map[
 		if pin.CreatedAt.After(now) {
 			return nil, fmt.Errorf("recovery pin creation is in the future")
 		}
-		if pin.ExpiresAt.After(now) {
+		if pin.ExpiresAt.After(now) && !verifiedGenerations[pin.Generation] {
 			if _, _, err := readToolGenerationManifest(filepath.Join(root, toolGenerationDirectory, pin.Generation), pin.Generation); err != nil {
 				return nil, fmt.Errorf("active recovery pin lower is invalid: %w", err)
 			}
+			verifiedGenerations[pin.Generation] = true
+
+		}
+		records[pin.Owner] = pin
+	}
+	return records, nil
+}
+
+func readToolRecoveryPins(ctx context.Context, root string, now time.Time) (map[string]bool, error) {
+	records, err := readToolRecoveryPinRecords(ctx, root, now)
+	if err != nil {
+		return nil, err
+	}
+	protected := make(map[string]bool)
+	for _, pin := range records {
+		if pin.ExpiresAt.After(now) {
 			protected[pin.Generation] = true
 		}
 	}

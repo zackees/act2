@@ -254,7 +254,7 @@ func ensureToolStoreMarker(path string) error {
 			return fmt.Errorf("unsupported tool store marker")
 		}
 		data, err := os.ReadFile(path)
-		if err != nil || string(data) != toolStoreMagic {
+		if err != nil || (string(data) != toolStoreMagic && string(data) != toolStoreRecoveryMagic) {
 			return fmt.Errorf("invalid tool store marker")
 		}
 		return nil
