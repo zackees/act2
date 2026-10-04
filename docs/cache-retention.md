@@ -234,3 +234,28 @@ restores it. This and the original import-hit test pass under the race detector
 (1.176 seconds); pinned golangci-lint reports zero issues. These are handler/file
 operations in an isolated test container, not Bosn run-container orchestration.
 Namespace metadata overhead and retained legacy-source bytes are outside the cap.
+
+## Supervised aggregate retry (local candidate)
+
+`act cache prune-cohort --apply --cache-server-path ROOT --max-bytes BYTES
+--watch 1m` runs immediately, then waits the interval after each bounded pass.
+It emits one JSON CohortReport per pass. Busy, missing, unreadable or partial
+stores remain visible and are retried instead of terminating the watcher.
+One-shot invocation retains its nonzero exit on a partial report. Explicit
+zero or negative watch intervals, invalid policies and negative budgets are
+rejected before maintenance. Context cancellation stops further passes;
+output failure terminates the command so a supervisor can detect it.
+
+The watcher uses the same exclusive root lease and namespace preflight as
+one-shot maintenance. It can maintain enrolled idle stores after their servers
+crash, and retries when a live server prevents collection. It does not start
+cache servers, create missing roots, enroll legacy namespaces, or infer that
+legacy writers are quiescent. A supervisor must start and monitor it; Bosn
+integration and safe warm migration remain open.
+
+RED: the command rejected --watch, preventing any periodic retry. GREEN:
+focused CLI tests under the race detector verify three incomplete passes,
+invalid intervals, cancellation before the first pass, and actual busy-to-idle
+root lease recovery using a running handler. An empty store lease test proves
+retry coordination; aggregate byte eviction remains covered by the separate
+cohort workload tests.

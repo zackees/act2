@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -31,21 +32,25 @@ func newCacheCommand(ctx context.Context, input *Input) *cobra.Command {
 	prune.Flags().BoolVar(&apply, "apply", false, "Apply the configured cache-server byte/age policy to this namespace")
 	var cohortMax int64
 	var cohortApply bool
+	var cohortWatch time.Duration
 	cohort := &cobra.Command{Use: "prune-cohort", Short: "Apply aggregate retention to an enrolled idle cohort", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if !cohortApply {
 				return fmt.Errorf("aggregate retention requires --apply; use cache audit for individual namespaces")
 			}
-			report := artifactcache.MaintainCohort(ctx, input.cacheServerPath, cohortMax, input.cachePolicy)
-			if err := json.NewEncoder(cmd.OutOrStdout()).Encode(report); err != nil {
+			if cmd.Flags().Changed("watch") && cohortWatch <= 0 {
+				return fmt.Errorf("watch interval must be positive")
+			}
+			if cohortMax < 0 {
+				return fmt.Errorf("aggregate maximum bytes must not be negative")
+			}
+			if err := input.cachePolicy.Validate(); err != nil {
 				return err
 			}
-			if report.Partial {
-				return fmt.Errorf("cohort retention is incomplete")
-			}
-			return nil
+			return watchCohort(ctx, cmd, input.cacheServerPath, cohortMax, input.cachePolicy, cohortWatch)
 		}}
 	cohort.Flags().Int64Var(&cohortMax, "max-bytes", 0, "Aggregate completed archive ceiling across the cohort; 0 disables it")
+	cohort.Flags().DurationVar(&cohortWatch, "watch", 0, "Retry aggregate maintenance periodically, including incomplete or busy passes; emits one JSON report per pass")
 	cohort.Flags().BoolVar(&cohortApply, "apply", false, "Apply age, namespace and aggregate retention to this cohort")
 	cache.AddCommand(audit, prune, cohort, newCacheImportCommand(ctx, input))
 	return cache
