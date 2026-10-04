@@ -6,11 +6,15 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/moby/moby/api/types/system"
 
 	"github.com/moby/moby/client"
+	"github.com/moby/moby/client/pkg/versions"
 	specs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/stretchr/testify/require"
 )
@@ -48,8 +52,9 @@ func TestDockerBuildAfterForeignPlatform(t *testing.T) {
 		require.NoError(t, writer.Close())
 		err = NewDockerBuildExecutor(NewDockerBuildExecutorInput{BuildContext: &body, Dockerfile: "Dockerfile", ImageTag: name, Platform: platform})(ctx)
 		require.NoError(t, err, "build requested platform %q after foreign-platform base", platform)
-		image, err := cli.ImageInspect(ctx, name, client.ImageInspectWithPlatform(&specs.Platform{OS: "linux", Architecture: expected}))
+		image, err := inspectBuiltPlatform(ctx, cli, name, expected)
 		require.NoError(t, err)
+		require.Equal(t, "linux", image.Os)
 		require.Equal(t, expected, image.Architecture, "builder must not silently reuse foreign-platform image")
 	}
 }
@@ -65,6 +70,48 @@ func TestNativeDockerBuildPlatformAliases(t *testing.T) {
 		t.Run(test.reported, func(t *testing.T) {
 			got := nativeDockerBuildPlatform(system.Info{OSType: "linux", Architecture: test.reported})
 			require.Equal(t, specs.Platform{OS: "linux", Architecture: test.architecture, Variant: test.variant}, got)
+		})
+	}
+}
+
+func inspectBuiltPlatform(ctx context.Context, cli client.APIClient, name, expected string) (client.ImageInspectResult, error) {
+	image, err := cli.ImageInspect(ctx, name)
+	if err != nil || versions.LessThan(cli.ClientVersion(), "1.49") {
+		return image, err
+	}
+	return cli.ImageInspect(ctx, name, client.ImageInspectWithPlatform(&specs.Platform{OS: "linux", Architecture: expected}))
+}
+
+func TestBuiltPlatformInspectionAPICompatibility(t *testing.T) {
+	for _, api := range []string{"1.48", "1.49"} {
+		t.Run(api, func(t *testing.T) {
+			platformQueries := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.URL.Path == "/_ping" {
+					w.Header().Set("API-Version", api)
+					return
+				}
+				require.True(t, strings.HasSuffix(r.URL.Path, "/images/built/json"))
+				if r.URL.Query().Get("platform") != "" {
+					platformQueries++
+				}
+				_, err := w.Write([]byte(`{"Os":"linux","Architecture":"arm64"}`))
+				require.NoError(t, err)
+			}))
+			defer server.Close()
+			cli, err := client.New(client.WithHost(server.URL))
+			require.NoError(t, err)
+			defer cli.Close()
+			image, err := inspectBuiltPlatform(context.Background(), cli, "built", "arm64")
+			require.NoError(t, err)
+			require.Equal(t, "linux", image.Os)
+			require.Equal(t, "arm64", image.Architecture)
+			expectedQueries := 0
+			if api == "1.49" {
+				expectedQueries = 1
+			}
+			require.Equal(t, expectedQueries, platformQueries)
 		})
 	}
 }
