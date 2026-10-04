@@ -72,17 +72,21 @@ func ImportCompleted(ctx context.Context, source, root, name string, maxBytes in
 		report.fail(err)
 		return report
 	}
-	if err := publishImport(ctx, sourceHandler, sourceDB, inventory.Fingerprint, root, caches, &report); err != nil {
+	if len(caches) == 0 && report.SkippedBudget > 0 {
+		report.fail(fmt.Errorf("no completed archive fits import budget; increase max-bytes to preserve a warm cache"))
+		return report
+	}
+	if err := publishImport(ctx, sourceHandler, sourceDB, inventory.Fingerprint, root, maxBytes, caches, &report); err != nil {
 		report.fail(err)
 	}
 	return report
 }
 
-func publishImport(ctx context.Context, source *Handler, sourceDB *bolthold.Store, fingerprint, root string, caches []*Cache, report *ImportReport) error {
-	return publishImportWithSpace(ctx, source, sourceDB, fingerprint, root, caches, report, availableImportSpace)
+func publishImport(ctx context.Context, source *Handler, sourceDB *bolthold.Store, fingerprint, root string, maxBytes int64, caches []*Cache, report *ImportReport) error {
+	return publishImportWithSpace(ctx, source, sourceDB, fingerprint, root, maxBytes, caches, report, availableImportSpace)
 }
 
-func publishImportWithSpace(ctx context.Context, source *Handler, sourceDB *bolthold.Store, fingerprint, root string, caches []*Cache, report *ImportReport, probe importSpaceProbe) error {
+func publishImportWithSpace(ctx context.Context, source *Handler, sourceDB *bolthold.Store, fingerprint, root string, maxBytes int64, caches []*Cache, report *ImportReport, probe importSpaceProbe) error {
 	stage, lease, err := createImportStage(root, report.Destination)
 	if err != nil {
 		return err
@@ -111,6 +115,9 @@ func publishImportWithSpace(ctx context.Context, source *Handler, sourceDB *bolt
 	if finalSource.Partial || finalSource.Fingerprint != fingerprint {
 		return fmt.Errorf("source changed during import")
 	}
+	if err := writeImportPublicationReceipt(stage, fingerprint, maxBytes, report); err != nil {
+		return err
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -120,10 +127,11 @@ func publishImportWithSpace(ctx context.Context, source *Handler, sourceDB *bolt
 }
 
 func createImportStage(root, destination string) (string, transferLease, error) {
+	// #nosec G703 -- explicit caller-selected cohort root, checked below.
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return "", nil, err
 	}
-	info, err := os.Lstat(root)
+	info, err := os.Lstat(root) // #nosec G703 -- explicit caller-selected cohort root.
 	if err != nil || !info.IsDir() {
 		return "", nil, fmt.Errorf("cohort root is not a directory")
 	}
@@ -158,6 +166,7 @@ func cleanupImportStage(stage string, report *ImportReport) {
 	report.ReceiptsOmitted = 0
 	// Only this invocation's generated stage is eligible for cleanup. The source
 	// and pre-existing destination are never cleanup targets.
+	// #nosec G703 -- only this invocation's generated private stage is removed.
 	if err := os.RemoveAll(stage); err != nil {
 		report.fail(fmt.Errorf("staging cleanup: %w", err))
 	} else {
@@ -199,7 +208,7 @@ func validateImportPaths(source, root, name string, maxBytes int64) error {
 	if rel == "." || rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
 		return fmt.Errorf("source must be outside destination cohort")
 	}
-	info, err := os.Lstat(source)
+	info, err := os.Lstat(source) // #nosec G703 -- explicit caller-selected source outside the destination cohort.
 	if err != nil || !info.IsDir() {
 		return fmt.Errorf("source must be an existing directory")
 	}

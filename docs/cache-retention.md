@@ -364,3 +364,53 @@ namespace byte/age policy and optional close-time aggregate policy; supervise
 The source-quiescent flag is caller responsibility, not a detector of old
 peers. This test does not authorize automatic source deletion or prove those
 Bosn daemon paths are implemented.
+
+## Refuse an empty warm cutover under an undersized budget
+
+Import previously published an empty destination when every completed source
+archive exceeded the import ceiling. This breaks warm migration and prevents
+a later retry because the destination already exists. A focused regression
+with two 80-byte archives and a 79-byte ceiling reproduced that publication.
+Import now refuses before staging/publication when completed archives were
+skipped for budget and none were selected. The report is partial with an
+actionable budget error; source metadata and archives remain untouched. A retry
+with an 80-byte budget can publish one warm archive at the same destination.
+An actually empty source remains eligible for empty initialization. This does
+not establish caller quiescence or Bosn rollout. Import race tests passed
+(1.177 seconds), including actual loopback HTTP restore after the larger-budget
+retry and genuinely empty-source initialization. Pinned lint reported 0 issues.
+This correction is not yet released; act2.5 retains the previous behavior.
+
+## Import publication receipts (candidate, not released)
+
+Import now writes `import-receipt-v1.json` inside its private stage before
+namespace publication. The bounded typed record includes absolute source and
+destination identities, source inventory fingerprint, selected byte ceiling,
+retained-source archive bytes, imported counts/bytes and at most twelve archive
+checksum receipts with an explicit omission count. The receipt file is synced
+and closed before namespace rename. Failed receipt creation prevents publication
+and follows the existing private-stage cleanup path.
+
+`cache import-receipt --cache-server-path COHORT/NAMESPACE` reads this historical
+evidence without creating or modifying a store. It refuses unsupported cohort
+identity, missing/nonregular/oversized input, wrong destination, unknown fields,
+trailing JSON, invalid counts/bytes and invalid or duplicate archive receipts.
+
+The receipt records verified creation-time import, not current archive inventory,
+successful parent-directory sync, peer exclusion or deletion authority over the
+source. It can survive publication with a lost stdout acknowledgement. Recovery
+must still reconcile the destination and current archive state before enrollment;
+absence or invalid evidence cannot authorize overwriting an existing namespace.
+No full power-loss durability claim is made by this slice.
+
+RED: successful import left no receipt for a lost acknowledgement. GREEN: the
+receipt is published with the namespace. An actual subprocess withheld its
+report after publication, was terminated by its parent, and left a readable
+receipt plus an HTTP-restorable archive; source metadata stayed byte-identical.
+Import race tests passed (1.118 seconds), and the actual Cobra cutover/receipt
+command test passed (0.028 seconds). Pinned lint reports zero issues. Bosn
+production enrollment and supervision remain separate integration work.
+
+The subsequent full artifactcache race suite passed (17.031 seconds); focused
+offline and cutover Cobra tests passed (0.034 seconds). Independent review
+found no blocking issues. Native full CI remains required before release.

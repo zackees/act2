@@ -45,7 +45,7 @@ func TestImportHeadroomFailureCleansStageWithoutCopyingOrPublishing(t *testing.T
 	require.NoError(t, db.Get(uint64(1), cache))
 	root := t.TempDir()
 	report := ImportReport{Source: source.dir, Destination: filepath.Join(root, "repo")}
-	err = publishImportWithSpace(context.Background(), source, db, inventory.Fingerprint, root, []*Cache{cache}, &report, func(string) (uint64, error) { return 0, nil })
+	err = publishImportWithSpace(context.Background(), source, db, inventory.Fingerprint, root, 80, []*Cache{cache}, &report, func(string) (uint64, error) { return 0, nil })
 	require.ErrorContains(t, err, "insufficient destination headroom")
 	require.False(t, report.Published)
 	require.Zero(t, report.ImportedCount)
