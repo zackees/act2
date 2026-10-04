@@ -123,6 +123,11 @@ func createRootCommand(ctx context.Context, input *Input, version string) *cobra
 	rootCmd.PersistentFlags().StringVarP(&input.cacheServerExternalURL, "cache-server-external-url", "", "", "Defines the external URL for if the cache server is behind a proxy. e.g.: https://act-cache-server.example.com. Be careful that there is no trailing slash.")
 	rootCmd.PersistentFlags().StringVarP(&input.cacheServerAddr, "cache-server-addr", "", common.GetOutboundIP().String(), "Defines the address to which the cache server binds.")
 	rootCmd.PersistentFlags().Uint16VarP(&input.cacheServerPort, "cache-server-port", "", 0, "Defines the port where the artifact server listens. 0 means a randomly available port.")
+	cacheDefaults := artifactcache.DefaultPolicy()
+	rootCmd.PersistentFlags().Int64Var(&input.cachePolicy.MaxBytes, "cache-server-max-bytes", cacheDefaults.MaxBytes, "Maximum completed archive bytes per cache namespace; 0 disables the byte ceiling")
+	rootCmd.PersistentFlags().DurationVar(&input.cachePolicy.MaxAge, "cache-server-max-age", cacheDefaults.MaxAge, "Maximum archive age (for example 720h); recent transfers are protected")
+	rootCmd.PersistentFlags().DurationVar(&input.cachePolicy.UnusedAge, "cache-server-unused-age", cacheDefaults.UnusedAge, "Expire archives unused for this duration")
+	rootCmd.PersistentFlags().DurationVar(&input.cachePolicy.GCInterval, "cache-server-gc-interval", cacheDefaults.GCInterval, "Periodic cache maintenance interval, including while the server is idle")
 	rootCmd.PersistentFlags().StringVarP(&input.actionCachePath, "action-cache-path", "", filepath.Join(CacheHomeDir, "act"), "Defines the path where the actions get cached and host workspaces created.")
 	rootCmd.PersistentFlags().StringVarP(&input.workflowOverlay, "workflow-overlay", "", "", "Directory mirroring the workspace: act reads local reusable workflows and local action metadata (action.yml) from it when present, while jobs still see the unmodified workspace")
 	rootCmd.PersistentFlags().BoolVarP(&input.actionOfflineMode, "action-offline-mode", "", false, "If action contents exists, it will not be fetch and pull again. If turn on this, will turn off force pull")
@@ -684,7 +689,7 @@ func newRunCommand(ctx context.Context, input *Input) func(*cobra.Command, []str
 		var cacheHandler *artifactcache.Handler
 		if !input.noCacheServer && envs[cacheURLKey] == "" {
 			var err error
-			cacheHandler, err = artifactcache.StartHandler(input.cacheServerPath, input.cacheServerExternalURL, input.cacheServerAddr, input.cacheServerPort, common.Logger(ctx))
+			cacheHandler, err = artifactcache.StartHandlerWithPolicy(input.cacheServerPath, input.cacheServerExternalURL, input.cacheServerAddr, input.cacheServerPort, common.Logger(ctx), input.cachePolicy)
 			if err != nil {
 				return err
 			}

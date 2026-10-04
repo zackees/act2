@@ -670,12 +670,21 @@ func TestHandler_gcCache(t *testing.T) {
 			Kept: false,
 		},
 		{
-			// should be removed, since it's used but too old.
+			// Recent lookup/download protects even an archive at its absolute age limit.
 			Cache: &Cache{
 				Key:       "test_key_3",
 				Version:   "test_version",
 				Complete:  true,
 				UsedAt:    now.Unix(),
+				CreatedAt: now.Add(-(keepUsed + time.Second)).Unix(),
+			},
+			Kept: true,
+		},
+		{
+			// Absolute age expiration resumes once the recent-use grace ends.
+			Cache: &Cache{
+				Key: "absolute-age-expired", Version: "test_version", Complete: true,
+				UsedAt:    now.Add(-(keepOld + time.Second)).Unix(),
 				CreatedAt: now.Add(-(keepUsed + time.Second)).Unix(),
 			},
 			Kept: false,

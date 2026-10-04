@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 
 	log "github.com/sirupsen/logrus"
+
+	"github.com/nektos/act/pkg/artifactcache"
 )
 
 // Input contains the input for the root command
@@ -49,6 +51,7 @@ type Input struct {
 	cacheServerExternalURL             string
 	cacheServerAddr                    string
 	cacheServerPort                    uint16
+	cachePolicy                        artifactcache.Policy
 	jsonLogger                         bool
 	noSkipCheckout                     bool
 	remoteName                         string

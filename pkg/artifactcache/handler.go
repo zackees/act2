@@ -37,8 +37,11 @@ type Handler struct {
 	server   *http.Server
 	logger   logrus.FieldLogger
 
-	gcing atomic.Bool
-	gcAt  time.Time
+	gcing           atomic.Bool
+	gcAt            time.Time
+	policy          Policy
+	stopMaintenance chan struct{}
+	maintenanceDone chan struct{}
 
 	outboundIP        string
 	customExternalURL string
@@ -46,7 +49,16 @@ type Handler struct {
 }
 
 func StartHandler(dir, customExternalURL string, outboundIP string, port uint16, logger logrus.FieldLogger) (*Handler, error) {
-	h := &Handler{}
+	return StartHandlerWithPolicy(dir, customExternalURL, outboundIP, port, logger, DefaultPolicy())
+}
+
+// StartHandlerWithPolicy starts a cache server with periodic retention. All
+// servers sharing a namespace must participate in transfer coordination.
+func StartHandlerWithPolicy(dir, customExternalURL string, outboundIP string, port uint16, logger logrus.FieldLogger, policy Policy) (*Handler, error) {
+	if err := policy.Validate(); err != nil {
+		return nil, err
+	}
+	h := &Handler{policy: policy}
 
 	if logger == nil {
 		discard := logrus.New()
@@ -63,11 +75,15 @@ func StartHandler(dir, customExternalURL string, outboundIP string, port uint16,
 		}
 		dir = filepath.Join(home, ".cache", "actcache")
 	}
+	//nolint:gosec // This directory is explicitly selected by the local CLI caller, not an HTTP request.
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
 
 	h.dir = dir
+	if err := h.prepareTransferLock(); err != nil {
+		return nil, err
+	}
 
 	storage, err := NewStorage(filepath.Join(dir, "cache"))
 	if err != nil {
@@ -122,6 +138,7 @@ func StartHandler(dir, customExternalURL string, outboundIP string, port uint16,
 	}()
 	h.listener = listener
 	h.server = server
+	h.startMaintenance()
 
 	return h, nil
 }
@@ -140,6 +157,11 @@ func (h *Handler) ExternalURL() string {
 func (h *Handler) Close() error {
 	if h == nil {
 		return nil
+	}
+	if h.stopMaintenance != nil {
+		close(h.stopMaintenance)
+		<-h.maintenanceDone
+		h.stopMaintenance = nil
 	}
 	var retErr error
 	if h.server != nil {
@@ -206,6 +228,11 @@ func (h *Handler) find(w http.ResponseWriter, r *http.Request, _ httprouter.Para
 	} else if !ok {
 		_ = db.Delete(cache.ID, cache)
 		h.responseJSON(w, r, 204)
+		return
+	}
+	cache.UsedAt = time.Now().Unix()
+	if err := db.Update(cache.ID, cache); err != nil {
+		h.responseJSON(w, r, 500, err)
 		return
 	}
 	h.responseJSON(w, r, 200, map[string]any{
@@ -362,8 +389,22 @@ func (h *Handler) clean(w http.ResponseWriter, r *http.Request, _ httprouter.Par
 
 func (h *Handler) middleware(handler httprouter.Handle) httprouter.Handle {
 	return func(w http.ResponseWriter, r *http.Request, params httprouter.Params) {
-		h.logger.Debugf("%s %s", r.Method, r.RequestURI)
-		handler(w, r, params)
+		transfer, err := h.transferLock(true)
+		if err != nil {
+			h.responseJSON(w, r, http.StatusServiceUnavailable, fmt.Errorf("cache transfer coordination: %w", err))
+			return
+		}
+		// Always acquire transfer coordination before opening metadata.
+		// A defer also releases the OS lock if the handler panics.
+		func() {
+			defer func() {
+				if err := transfer.Close(); err != nil {
+					h.logger.Warnf("release transfer coordination: %v", err)
+				}
+			}()
+			h.logger.Debugf("%s %s", r.Method, r.RequestURI)
+			handler(w, r, params)
+		}()
 		go h.gcCache()
 	}
 }
@@ -426,120 +467,6 @@ func (h *Handler) useCache(id uint64) {
 	}
 	cache.UsedAt = time.Now().Unix()
 	_ = db.Update(cache.ID, cache)
-}
-
-const (
-	keepUsed   = 30 * 24 * time.Hour
-	keepUnused = 7 * 24 * time.Hour
-	keepTemp   = 5 * time.Minute
-	keepOld    = 5 * time.Minute
-)
-
-func (h *Handler) gcCache() {
-	if h.gcing.Load() {
-		return
-	}
-	if !h.gcing.CompareAndSwap(false, true) {
-		return
-	}
-	defer h.gcing.Store(false)
-
-	if time.Since(h.gcAt) < time.Hour {
-		h.logger.Debugf("skip gc: %v", h.gcAt.String())
-		return
-	}
-	h.gcAt = time.Now()
-	h.logger.Debugf("gc: %v", h.gcAt.String())
-
-	db, err := h.openDB()
-	if err != nil {
-		return
-	}
-	defer db.Close()
-
-	// Remove the caches which are not completed for a while, they are most likely to be broken.
-	var caches []*Cache
-	if err := db.Find(&caches, bolthold.
-		Where("UsedAt").Lt(time.Now().Add(-keepTemp).Unix()).
-		And("Complete").Eq(false),
-	); err != nil {
-		h.logger.Warnf("find caches: %v", err)
-	} else {
-		for _, cache := range caches {
-			h.storage.Remove(cache.ID)
-			if err := db.Delete(cache.ID, cache); err != nil {
-				h.logger.Warnf("delete cache: %v", err)
-				continue
-			}
-			h.logger.Infof("deleted cache: %+v", cache)
-		}
-	}
-
-	// Remove the old caches which have not been used recently.
-	caches = caches[:0]
-	if err := db.Find(&caches, bolthold.
-		Where("UsedAt").Lt(time.Now().Add(-keepUnused).Unix()),
-	); err != nil {
-		h.logger.Warnf("find caches: %v", err)
-	} else {
-		for _, cache := range caches {
-			h.storage.Remove(cache.ID)
-			if err := db.Delete(cache.ID, cache); err != nil {
-				h.logger.Warnf("delete cache: %v", err)
-				continue
-			}
-			h.logger.Infof("deleted cache: %+v", cache)
-		}
-	}
-
-	// Remove the old caches which are too old.
-	caches = caches[:0]
-	if err := db.Find(&caches, bolthold.
-		Where("CreatedAt").Lt(time.Now().Add(-keepUsed).Unix()),
-	); err != nil {
-		h.logger.Warnf("find caches: %v", err)
-	} else {
-		for _, cache := range caches {
-			h.storage.Remove(cache.ID)
-			if err := db.Delete(cache.ID, cache); err != nil {
-				h.logger.Warnf("delete cache: %v", err)
-				continue
-			}
-			h.logger.Infof("deleted cache: %+v", cache)
-		}
-	}
-
-	// Remove the old caches with the same key and version, keep the latest one.
-	// Also keep the olds which have been used recently for a while in case of the cache is still in use.
-	if results, err := db.FindAggregate(
-		&Cache{},
-		bolthold.Where("Complete").Eq(true),
-		"Key", "Version",
-	); err != nil {
-		h.logger.Warnf("find aggregate caches: %v", err)
-	} else {
-		for _, result := range results {
-			if result.Count() <= 1 {
-				continue
-			}
-			result.Sort("CreatedAt")
-			caches = caches[:0]
-			result.Reduction(&caches)
-			for _, cache := range caches[:len(caches)-1] {
-				if time.Since(time.Unix(cache.UsedAt, 0)) < keepOld {
-					// Keep it since it has been used recently, even if it's old.
-					// Or it could break downloading in process.
-					continue
-				}
-				h.storage.Remove(cache.ID)
-				if err := db.Delete(cache.ID, cache); err != nil {
-					h.logger.Warnf("delete cache: %v", err)
-					continue
-				}
-				h.logger.Infof("deleted cache: %+v", cache)
-			}
-		}
-	}
 }
 
 func (h *Handler) responseJSON(w http.ResponseWriter, r *http.Request, code int, v ...any) {
