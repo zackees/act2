@@ -13,7 +13,12 @@ import (
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/filemode"
 	"github.com/go-git/go-git/v5/plumbing/format/pktline"
+	"github.com/go-git/go-git/v5/plumbing/object"
 )
+
+// maxImmutableTagChain bounds tag peeling so a cyclic or absurd tag chain fails
+// closed instead of looping.
+const maxImmutableTagChain = 8
 
 func isImmutableGitPin(ref string) bool {
 	if len(ref) != 40 {
@@ -37,13 +42,22 @@ func acquireImmutableGitPin(ctx context.Context, input NewGitCloneExecutorInput)
 		return err
 	}
 	pin := plumbing.NewHash(input.Ref)
-	_, err = repo.Storer.EncodedObject(plumbing.CommitObject, pin)
+	commit, err := resolveImmutablePinCommit(repo, pin)
 	if errors.Is(err, plumbing.ErrObjectNotFound) && !offlineExisting {
 		err = fetchImmutableGitPin(ctx, repo, input, pin)
+		if err != nil {
+			return err
+		}
+		// A nil fetch error is not evidence the pin arrived: upload-pack can
+		// accept a want it does not satisfy and still answer successfully.
+		// Re-resolve, and report a diagnosable failure rather than the bare
+		// plumbing error a later verification would surface.
+		commit, err = resolveImmutablePinCommit(repo, pin)
 	}
-	if err == nil {
-		err = verifyImmutableGitCheckout(ctx, repo, pin)
+	if err != nil {
+		return err
 	}
+	err = verifyImmutableGitCheckout(ctx, repo, commit)
 	if err != nil {
 		return err
 	}
@@ -54,10 +68,34 @@ func acquireImmutableGitPin(ctx context.Context, input NewGitCloneExecutorInput)
 	if err != nil {
 		return err
 	}
-	if err = worktree.Checkout(&gogit.CheckoutOptions{Hash: pin, Force: true}); err != nil {
+	if err = worktree.Checkout(&gogit.CheckoutOptions{Hash: commit, Force: true}); err != nil {
 		return err
 	}
-	return worktree.Reset(&gogit.ResetOptions{Mode: gogit.HardReset, Commit: pin})
+	return worktree.Reset(&gogit.ResetOptions{Mode: gogit.HardReset, Commit: commit})
+}
+
+// resolveImmutablePinCommit returns the commit a 40-hex pin names. A pin may be
+// an annotated tag object rather than a commit; git peels those, so act2 must
+// too or an ordinary action pin can never be acquired.
+func resolveImmutablePinCommit(repo *gogit.Repository, pin plumbing.Hash) (plumbing.Hash, error) {
+	// Peel defensively: a tag may target another tag.
+	for range maxImmutableTagChain {
+		if _, err := repo.Storer.EncodedObject(plumbing.CommitObject, pin); err == nil {
+			return pin, nil
+		} else if !errors.Is(err, plumbing.ErrObjectNotFound) {
+			return plumbing.ZeroHash, err
+		}
+		encoded, err := repo.Storer.EncodedObject(plumbing.TagObject, pin)
+		if err != nil {
+			return plumbing.ZeroHash, err
+		}
+		var tag object.Tag
+		if err = tag.Decode(encoded); err != nil {
+			return plumbing.ZeroHash, err
+		}
+		pin = tag.Target
+	}
+	return plumbing.ZeroHash, fmt.Errorf("immutable Git pin %s exceeds the %d tag chain limit", pin, maxImmutableTagChain)
 }
 
 func immutableGitRepository(input NewGitCloneExecutorInput) (*gogit.Repository, error) {

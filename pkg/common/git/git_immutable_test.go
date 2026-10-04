@@ -43,6 +43,18 @@ func TestGitImmutableColdAcquisition(t *testing.T) {
 	}
 }
 
+func TestGitImmutableAnnotatedTagPin(t *testing.T) {
+	fixture := newImmutableFixture(t)
+	pin := fixture.annotatedTag(t, "v5", fixture.commits[7])
+	server := newImmutableHTTP(t, fixture)
+	dir := filepath.Join(immutableFixtureDirectory(t), "checkout")
+	input := NewGitCloneExecutorInput{URL: server.url(), Ref: pin.String(), Dir: dir}
+	require.NoError(t, NewGitCloneExecutor(input)(context.Background()),
+		"an annotated tag object is a valid immutable pin; git peels it and act2 must too")
+	// The checkout is the tagged commit, not the tag object itself.
+	requireImmutableCheckout(t, dir, fixture.commits[7], "revision-07\n")
+}
+
 func TestGitImmutableWarmAcquisitionDoesNotRefresh(t *testing.T) {
 	fixture := newImmutableFixture(t)
 	server := newImmutableHTTP(t, fixture)

@@ -71,6 +71,18 @@ func (fixture immutableFixture) commit(t *testing.T, contents string) plumbing.H
 	return hash
 }
 
+// annotatedTag creates an annotated tag object over an existing commit, which is
+// what a real 40-hex action pin can name instead of a commit.
+func (fixture immutableFixture) annotatedTag(t *testing.T, name string, commit plumbing.Hash) plumbing.Hash {
+	t.Helper()
+	tagger := &object.Signature{Name: "Fixture", Email: "fixture@example.invalid", When: time.Unix(3, 0)}
+	hash, err := fixture.repo.CreateTag(name, commit, &gogit.CreateTagOptions{
+		Tagger: tagger, Message: "release " + name,
+	})
+	require.NoError(t, err)
+	return hash.Hash()
+}
+
 func (fixture immutableFixture) submoduleCommit(t *testing.T) plumbing.Hash {
 	t.Helper()
 	worktree, err := fixture.repo.Worktree()
