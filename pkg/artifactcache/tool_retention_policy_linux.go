@@ -61,7 +61,16 @@ func retainToolStore(ctx context.Context, root string, policy ToolRetentionPolic
 		report.fail(err)
 		return report
 	}
-	return sweepToolGenerations(ctx, root, policy, selection, candidates, report)
+	objects, err := toolRetentionCandidatesAt(root, policy.MaxCandidates)
+	if err != nil {
+		report.fail(err)
+		return report
+	}
+	report = sweepToolGenerations(ctx, root, policy, selection, candidates, report)
+	if report.Partial {
+		return report
+	}
+	return sweepToolObjects(ctx, root, policy, objects, report)
 }
 
 func sweepToolGenerations(ctx context.Context, root string, policy ToolRetentionPolicy, selection ToolGenerationSelection, candidates []toolRetentionCandidate, report ToolRetentionReport) ToolRetentionReport {
@@ -101,7 +110,10 @@ func sweepToolGenerations(ctx context.Context, root string, policy ToolRetention
 }
 
 func toolRetentionCandidates(root string, bound int) ([]toolRetentionCandidate, error) {
-	directory := filepath.Join(root, toolGenerationDirectory)
+	return toolRetentionCandidatesAt(filepath.Join(root, toolGenerationDirectory), bound)
+}
+
+func toolRetentionCandidatesAt(directory string, bound int) ([]toolRetentionCandidate, error) {
 	info, err := os.Lstat(directory)
 	if err != nil || !info.IsDir() {
 		return nil, fmt.Errorf("generation namespace is invalid")

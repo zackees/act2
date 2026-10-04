@@ -5,12 +5,15 @@ package artifactcache
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"time"
 )
+
+var errToolObjectReferenced = errors.New("object is referenced by retained generation")
 
 func retireToolObject(ctx context.Context, root, id string, maxBytes int64, maxGenerations int) error {
 	guard := ToolGenerationSpec{SchemaVersion: 1, Installs: []ToolGenerationInstall{{Path: "retirement", ObjectID: id}}}
@@ -29,6 +32,11 @@ func retireToolObject(ctx context.Context, root, id string, maxBytes int64, maxG
 		return err
 	}
 	defer catalog.Close()
+	return retireToolObjectLocked(ctx, root, id, maxBytes, maxGenerations)
+}
+
+// Caller holds original catalog writer across reference inventory and removal.
+func retireToolObjectLocked(ctx context.Context, root, id string, maxBytes int64, maxGenerations int) error {
 	selection, err := readToolGenerationSelection(root)
 	if err != nil {
 		return err
@@ -91,7 +99,7 @@ func verifyToolObjectUnreferenced(ctx context.Context, root, id string, maxBytes
 		}
 		for _, install := range manifest.Installs {
 			if install.ObjectID == id {
-				return fmt.Errorf("object is referenced by retained generation")
+				return errToolObjectReferenced
 			}
 		}
 	}
