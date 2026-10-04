@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/nektos/act/pkg/common"
 	"github.com/nektos/act/pkg/sourcecheckout"
@@ -150,15 +151,35 @@ func (e *HostEnvironment) validateSourceOwnedTree(destination string) error {
 	if e.OwnedRoot == "" || destination != e.Path || filepath.Dir(destination) != e.OwnedRoot {
 		return fmt.Errorf("source checkout requires a private owned workspace")
 	}
+	if filepath.Dir(e.OwnedRoot) == e.OwnedRoot {
+		return fmt.Errorf("source checkout cannot own a filesystem root")
+	}
+	requested, err := filepath.Rel(e.OwnedRoot, e.Workdir)
+	if err != nil {
+		return err
+	}
+	if requested != ".." && !strings.HasPrefix(requested, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("source checkout cannot own the requested frozen source")
+	}
 	for _, path := range []string{e.OwnedRoot, destination} {
 		info, err := os.Lstat(path)
-		if err != nil { return err }
-		if !info.IsDir() || info.Mode() & os.ModeSymlink != 0 { return fmt.Errorf("source checkout requires real owned directories") }
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("source checkout requires real owned directories")
+		}
 		resolved, err := filepath.EvalSymlinks(path)
-		if err != nil { return err }
+		if err != nil {
+			return err
+		}
 		absolute, err := filepath.Abs(path)
-		if err != nil { return err }
-		if resolved != absolute { return fmt.Errorf("source checkout owned path has an alias") }
+		if err != nil {
+			return err
+		}
+		if resolved != absolute {
+			return fmt.Errorf("source checkout owned path has an alias")
+		}
 	}
 	return nil
 }

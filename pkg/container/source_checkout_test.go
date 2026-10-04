@@ -129,3 +129,21 @@ func TestActualCopyDirCancelledAdmissionDoesNotCopyRequestedSource(t *testing.T)
 	_, err := os.Stat(filepath.Join(destination, "source.rs"))
 	assert.True(t, os.IsNotExist(err))
 }
+
+func TestSourceAdmissionRejectsRequestedSourceAndBroadOwnership(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	require.NoError(t, os.Mkdir(workspace, 0700))
+	sentinel := filepath.Join(workspace, "source.rs")
+	require.NoError(t, os.WriteFile(sentinel, []byte("frozen"), 0600))
+	environment := HostEnvironment{Path: workspace, OwnedRoot: root, Workdir: workspace}
+	assert.Error(t, environment.discardSourceCheckout(workspace))
+	body, err := os.ReadFile(sentinel)
+	require.NoError(t, err)
+	assert.Equal(t, "frozen", string(body))
+	// Reject a filesystem-wide ownership claim without touching its real child.
+	environment.OwnedRoot = string(filepath.Separator)
+	environment.Path = filepath.Join(environment.OwnedRoot, "tmp")
+	environment.Workdir = filepath.Join(root, "outside")
+	assert.Error(t, environment.validateSourceOwnedTree(environment.Path))
+}

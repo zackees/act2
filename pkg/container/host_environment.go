@@ -35,12 +35,12 @@ type HostEnvironment struct {
 	// OwnedRoot is the controller-owned parent of this private initial workspace.
 	OwnedRoot string
 	// SourceReceiver is a trusted controller injection, never a workflow decoder.
-	SourceReceiver SourceCheckoutReceiver
-	sourceCheckoutMu sync.Mutex
+	SourceReceiver          SourceCheckoutReceiver
+	sourceCheckoutMu        sync.Mutex
 	sourceCheckoutAttempted bool
-	CleanUp func()
-	StdOut io.Writer
-	StdErr io.Writer
+	CleanUp                 func()
+	StdOut                  io.Writer
+	StdErr                  io.Writer
 	// JSON logging needs the original pipes; a PTY merges them.
 	SeparateStreams bool
 }

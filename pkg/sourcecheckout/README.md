@@ -61,3 +61,21 @@ Real Bosn issuer grants, bounded authenticated archive materialization, compatib
 Cargo/Dylint output delivery, and physical PR-to-main promotion remain required
 before activation; this API slice does not complete CACHE-028. Receiver test
 issuers are fixtures, never production authorization.
+
+The embedding seam is `runner.Config.SourceReceiver`, which is excluded from
+JSON/YAML configuration. `startHostEnvironment` passes this typed receiver and
+the newly allocated private workspace parent to the actual host executor. CLI
+and workflow inputs never create a receiver. Nil retains stock cold checkout,
+including the current executable. Source admission validates its own initial
+workspace only; it does not change Docker-action stage ownership or tool-store
+updater locking.
+
+Bosn activation remains separate: its admitted frozen snapshot and effective Git
+tree can identify requested source, but those fields do not grant a cache writer.
+A controller-owned payload store must independently approve the donor writer,
+policy/workflow/run/attempt/job, namespace and compatible-output identity, bound
+and hash the actual materialization, and independently supply donor Git authority.
+The trusted embedding boundary must deliver those authenticated objects to the
+typed receiver before job checkout. No request JSON or cache seal can construct
+that authorization. Existing Bosn source/event copying alone supplies no approved
+donor receipt or receiver admission; production activation is not implemented.
