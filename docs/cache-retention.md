@@ -364,3 +364,19 @@ namespace byte/age policy and optional close-time aggregate policy; supervise
 The source-quiescent flag is caller responsibility, not a detector of old
 peers. This test does not authorize automatic source deletion or prove those
 Bosn daemon paths are implemented.
+
+## Refuse an empty warm cutover under an undersized budget
+
+Import previously published an empty destination when every completed source
+archive exceeded the import ceiling. This breaks warm migration and prevents
+a later retry because the destination already exists. A focused regression
+with two 80-byte archives and a 79-byte ceiling reproduced that publication.
+Import now refuses before staging/publication when completed archives were
+skipped for budget and none were selected. The report is partial with an
+actionable budget error; source metadata and archives remain untouched. A retry
+with an 80-byte budget can publish one warm archive at the same destination.
+An actually empty source remains eligible for empty initialization. This does
+not establish caller quiescence or Bosn rollout. Import race tests passed
+(1.177 seconds), including actual loopback HTTP restore after the larger-budget
+retry and genuinely empty-source initialization. Pinned lint reported 0 issues.
+This correction is not yet released; act2.5 retains the previous behavior.

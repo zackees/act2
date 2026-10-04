@@ -119,3 +119,40 @@ func TestImportChangedArchiveNeverPublishesAndCleansStage(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "changed", string(data), "cleanup must never remove source data")
 }
+
+func TestImportRefusesColdCutoverWhenNoCompletedArchiveFits(t *testing.T) {
+	source := seedLegacyImportStore(t, 2)
+	before, err := os.ReadFile(filepath.Join(source.dir, "bolt.db"))
+	require.NoError(t, err)
+	root := filepath.Join(t.TempDir(), "cohort")
+	report := ImportCompleted(context.Background(), source.dir, root, "repo", 79)
+	require.True(t, report.Partial, "a warm cutover must not publish an empty store")
+	require.False(t, report.Published)
+	require.EqualValues(t, 2, report.SkippedBudget)
+	require.Empty(t, report.PendingStage)
+	_, err = os.Stat(report.Destination)
+	require.True(t, os.IsNotExist(err))
+	after, err := os.ReadFile(filepath.Join(source.dir, "bolt.db"))
+	require.NoError(t, err)
+	require.Equal(t, before, after)
+	// Refusal must leave the destination available for a warmer retry.
+	retry := ImportCompleted(context.Background(), source.dir, root, "repo", 80)
+	require.False(t, retry.Partial, retry.Error)
+	require.True(t, retry.Published)
+	require.EqualValues(t, 1, retry.ImportedCount)
+	policy := DefaultPolicy()
+	policy.CohortRoot = root
+	h, err := StartHandlerWithPolicy(retry.Destination, "", "127.0.0.1", 0, nil, policy)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, h.Close()) })
+	assertArchiveHit(t, h, "warm-0")
+}
+
+func TestImportAllowsGenuinelyEmptySource(t *testing.T) {
+	source := seedLegacyImportStore(t, 0)
+	report := ImportCompleted(context.Background(), source.dir, t.TempDir(), "repo", 80)
+	require.False(t, report.Partial, report.Error)
+	require.True(t, report.Published)
+	require.Zero(t, report.ImportedCount)
+	require.Zero(t, report.SkippedBudget)
+}

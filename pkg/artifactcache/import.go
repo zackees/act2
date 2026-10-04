@@ -72,6 +72,10 @@ func ImportCompleted(ctx context.Context, source, root, name string, maxBytes in
 		report.fail(err)
 		return report
 	}
+	if len(caches) == 0 && report.SkippedBudget > 0 {
+		report.fail(fmt.Errorf("no completed archive fits import budget; increase max-bytes to preserve a warm cache"))
+		return report
+	}
 	if err := publishImport(ctx, sourceHandler, sourceDB, inventory.Fingerprint, root, caches, &report); err != nil {
 		report.fail(err)
 	}
