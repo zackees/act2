@@ -52,7 +52,7 @@ func newCacheCommand(ctx context.Context, input *Input) *cobra.Command {
 	cohort.Flags().Int64Var(&cohortMax, "max-bytes", 0, "Aggregate completed archive ceiling across the cohort; 0 disables it")
 	cohort.Flags().DurationVar(&cohortWatch, "watch", 0, "Retry aggregate maintenance periodically, including incomplete or busy passes; emits one JSON report per pass")
 	cohort.Flags().BoolVar(&cohortApply, "apply", false, "Apply age, namespace and aggregate retention to this cohort")
-	cache.AddCommand(audit, prune, cohort, newCacheImportCommand(ctx, input), newCacheImportReceiptCommand(input), newCacheToolSnapshotCommand(ctx, input), newCacheToolGenerationCommand(ctx, input), newCacheToolExecCommand(ctx, input), newCacheToolUpdateCommand(ctx, input), newCacheToolCurrentCommand(ctx, input))
+	cache.AddCommand(audit, prune, cohort, newCacheImportCommand(ctx, input), newCacheImportReceiptCommand(input), newCacheToolSnapshotCommand(ctx, input), newCacheToolGenerationCommand(ctx, input), newCacheToolExecCommand(ctx, input), newCacheToolUpdateCommand(ctx, input), newCacheToolCurrentCommand(ctx, input), newCacheToolUsageCommand(ctx, input))
 	return cache
 }
 
