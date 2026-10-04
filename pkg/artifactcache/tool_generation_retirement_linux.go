@@ -47,6 +47,26 @@ func retireToolGeneration(ctx context.Context, root, id string, maxBytes int64) 
 	if err := verifyToolGeneration(ctx, generation, data, manifest.Tree, maxBytes); err != nil {
 		return err
 	}
+	if err := verifyToolRetirementLayout(ctx, root, generation); err != nil {
+		return err
+	}
+	writer, err := openTransferLease(filepath.Join(generation, toolGenerationReaderLock), false, 100*time.Millisecond)
+	if err != nil {
+		return err
+	}
+	defer writer.Close()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	// Both original locks remain held through unlink and parent-directory sync.
+	// #nosec G703 -- Verified nonsymlink generation beneath canonical store, validated SHA-256 ID, closed tree and fixed control leaves.
+	if err := os.RemoveAll(generation); err != nil {
+		return fmt.Errorf("generation retirement incomplete: %w", err)
+	}
+	return syncToolDirectory(filepath.Join(root, toolGenerationDirectory))
+}
+
+func verifyToolRetirementLayout(ctx context.Context, root, generation string) error {
 	// Verify the entire store's bounded metadata inventory before deletion. This
 	// refuses mounted filesystem crossings, including unexpected nested mounts.
 	usage := auditToolStoreUsageLocked(ctx, root, 1000000)
@@ -75,18 +95,5 @@ func retireToolGeneration(ctx context.Context, root, id string, maxBytes int64) 
 			return fmt.Errorf("generation contains unknown control entries")
 		}
 	}
-	writer, err := openTransferLease(filepath.Join(generation, toolGenerationReaderLock), false, 100*time.Millisecond)
-	if err != nil {
-		return err
-	}
-	defer writer.Close()
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	// Both original locks remain held through unlink and parent-directory sync.
-	// #nosec G703 -- Verified nonsymlink generation beneath canonical store, validated SHA-256 ID, closed tree and fixed control leaves.
-	if err := os.RemoveAll(generation); err != nil {
-		return fmt.Errorf("generation retirement incomplete: %w", err)
-	}
-	return syncToolDirectory(filepath.Join(root, toolGenerationDirectory))
+	return verifyToolRetirementMounts(ctx, root, generation, toolMountID)
 }
