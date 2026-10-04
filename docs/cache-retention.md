@@ -274,3 +274,38 @@ Ctrl+C (graceful job cancellation) stops maintenance, as does SIGTERM/forced
 cancellation. A focused RED test originally remained running until force
 cancellation; GREEN stops after the separate job context is canceled while
 the force context stays live. The focused CLI race suite and lint pass.
+
+## Warm import headroom admission (candidate)
+
+Before copying archives, import now measures caller-available free bytes on
+the destination staging filesystem. Linux/macOS use available filesystem
+blocks; Windows uses GetDiskFreeSpaceEx. An unreadable probe or unsupported
+platform refuses import. The estimate adds selected archive lengths, a 64 KiB
+allocation cushion per archive, and 64 MiB metadata headroom. Insufficient
+space refuses copying and removes this invocation's stage; source data and an
+existing destination remain protected.
+
+ImportReport exposes `retained_source_archive_bytes`,
+`available_destination_bytes` and `required_additional_bytes`. Retained source
+archive lengths are separate from the copy estimate: current free space
+already reflects their allocation when source and destination share a
+filesystem. These values are apparent bytes/estimates, not a combined physical
+footprint or a reservation. Concurrent writers, unusual allocation overhead,
+quotas and a host-wide free-space floor still require Bosn admission policy.
+No automatic source deletion is introduced.
+
+Focused RED cases for missing refusal/accounting now pass under the race
+detector. Actual failure-path tests preserve source metadata and archives and
+leave no published namespace or stage. Existing successful import tests check
+retained source bytes and a native destination probe. Windows amd64 and macOS
+arm64 package cross-builds pass. The existing host CI selection now includes
+`TestImport*` so native adapters run there; that new CI result is pending.
+
+Windows publication uses a same-volume MoveFileEx call with WRITE_THROUGH,
+without replacement of an existing target, after files/metadata close. It
+avoids Unix read-only directory fsync, which fails on a Windows directory
+handle. Unix publication retains rename followed by parent-directory sync;
+a sync failure preserves the truthful published state. Microsoft's
+[directory-move example](https://learn.microsoft.com/en-us/windows/win32/fileio/moving-directories)
+uses this Windows API/flag combination. Native import CI remains required;
+this is not proof of power-loss durability on arbitrary Windows filesystems.

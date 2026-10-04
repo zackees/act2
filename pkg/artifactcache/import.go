@@ -15,19 +15,22 @@ import (
 )
 
 type ImportReport struct {
-	SchemaVersion     int             `json:"schema_version"`
-	Source            string          `json:"source"`
-	Destination       string          `json:"destination"`
-	Published         bool            `json:"published"`
-	Partial           bool            `json:"partial"`
-	Error             string          `json:"error,omitempty"`
-	PendingStage      string          `json:"pending_stage,omitempty"`
-	ImportedCount     uint64          `json:"imported_count"`
-	ImportedBytes     int64           `json:"imported_bytes"`
-	SkippedIncomplete uint64          `json:"skipped_incomplete"`
-	SkippedBudget     uint64          `json:"skipped_budget"`
-	Receipts          []ImportReceipt `json:"receipts"`
-	ReceiptsOmitted   uint64          `json:"receipts_omitted"`
+	RetainedSourceArchiveBytes *int64          `json:"retained_source_archive_bytes"`
+	AvailableDestinationBytes  *uint64         `json:"available_destination_bytes"`
+	RequiredAdditionalBytes    *uint64         `json:"required_additional_bytes"`
+	SchemaVersion              int             `json:"schema_version"`
+	Source                     string          `json:"source"`
+	Destination                string          `json:"destination"`
+	Published                  bool            `json:"published"`
+	Partial                    bool            `json:"partial"`
+	Error                      string          `json:"error,omitempty"`
+	PendingStage               string          `json:"pending_stage,omitempty"`
+	ImportedCount              uint64          `json:"imported_count"`
+	ImportedBytes              int64           `json:"imported_bytes"`
+	SkippedIncomplete          uint64          `json:"skipped_incomplete"`
+	SkippedBudget              uint64          `json:"skipped_budget"`
+	Receipts                   []ImportReceipt `json:"receipts"`
+	ReceiptsOmitted            uint64          `json:"receipts_omitted"`
 }
 
 type ImportReceipt struct {
@@ -64,6 +67,7 @@ func ImportCompleted(ctx context.Context, source, root, name string, maxBytes in
 		report.fail(fmt.Errorf("source inventory incomplete: %v", inventory.Errors))
 		return report
 	}
+	report.RetainedSourceArchiveBytes = inventory.ArchiveBytes
 	caches, err := selectImportCaches(ctx, sourceHandler, sourceDB, maxBytes, &report)
 	if err != nil {
 		report.fail(err)
@@ -76,6 +80,10 @@ func ImportCompleted(ctx context.Context, source, root, name string, maxBytes in
 }
 
 func publishImport(ctx context.Context, source *Handler, sourceDB *bolthold.Store, fingerprint, root string, caches []*Cache, report *ImportReport) error {
+	return publishImportWithSpace(ctx, source, sourceDB, fingerprint, root, caches, report, availableImportSpace)
+}
+
+func publishImportWithSpace(ctx context.Context, source *Handler, sourceDB *bolthold.Store, fingerprint, root string, caches []*Cache, report *ImportReport, probe importSpaceProbe) error {
 	stage, lease, err := createImportStage(root, report.Destination)
 	if err != nil {
 		return err
@@ -94,6 +102,9 @@ func publishImport(ctx context.Context, source *Handler, sourceDB *bolthold.Stor
 	if err != nil {
 		return err
 	}
+	if err := checkImportHeadroom(stage, caches, report, probe); err != nil {
+		return err
+	}
 	if err := populateImport(ctx, source, destination, caches, report); err != nil {
 		return err
 	}
@@ -104,20 +115,9 @@ func publishImport(ctx context.Context, source *Handler, sourceDB *bolthold.Stor
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := os.Rename(stage, report.Destination); err != nil {
-		return err
-	}
-	report.Published = true
-	directory, err := os.Open(root)
-	if err != nil {
-		return err
-	}
-	syncErr := directory.Sync()
-	closeErr := directory.Close()
-	if syncErr != nil {
-		return syncErr
-	}
-	return closeErr
+	published, err := publishImportStage(stage, report.Destination, root)
+	report.Published = published
+	return err
 }
 
 func createImportStage(root, destination string) (string, *bbolt.DB, error) {
