@@ -41,11 +41,11 @@ func publishToolGeneration(ctx context.Context, root string, spec ToolGeneration
 		return report
 	}
 	defer lease.Close()
-	return publishToolGenerationLocked(ctx, root, installs, maxBytes)
+	return publishToolGenerationLocked(ctx, lease, root, installs, maxBytes)
 }
 
 // Caller holds the original catalog writer lock throughout publication.
-func publishToolGenerationLocked(ctx context.Context, root string, installs []ToolGenerationInstall, maxBytes int64) (report ToolSnapshotReport) {
+func publishToolGenerationLocked(ctx context.Context, catalog transferLease, root string, installs []ToolGenerationInstall, maxBytes int64) (report ToolSnapshotReport) {
 	report = ToolSnapshotReport{SchemaVersion: 1, Source: root, Completion: "generation-v1"}
 	manifest, total, err := planToolGeneration(ctx, root, installs, maxBytes)
 	if err != nil {
@@ -90,7 +90,8 @@ func publishToolGenerationLocked(ctx context.Context, root string, installs []To
 		report.fail(err)
 		return report
 	}
-	stage, err := os.MkdirTemp(generations, ".tool-generation-stage-")
+	stage, err := createOwnedToolStage(catalog, root, generations, ".tool-generation-stage-")
+	report.PendingStage = stage
 	if err != nil {
 		report.fail(err)
 		return report
@@ -98,7 +99,7 @@ func publishToolGenerationLocked(ctx context.Context, root string, installs []To
 	report.PendingStage = stage
 	defer func() {
 		if report.PendingStage != "" {
-			if err := os.RemoveAll(stage); err != nil {
+			if err := cleanupOwnedToolStage(ctx, catalog, root, stage); err != nil {
 				report.fail(fmt.Errorf("tool generation stage cleanup failed: %w", err))
 			} else {
 				report.PendingStage = ""
@@ -119,6 +120,8 @@ func publishToolGenerationLocked(ctx context.Context, root string, installs []To
 	}
 	report.Published, report.PendingStage = true, ""
 	if err := syncToolDirectory(generations); err != nil {
+		report.fail(err)
+	} else if err := finishOwnedToolStage(catalog, root, stage); err != nil {
 		report.fail(err)
 	}
 	return report

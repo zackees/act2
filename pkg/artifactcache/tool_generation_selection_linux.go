@@ -66,7 +66,7 @@ func updateToolGenerationWithSelectionSync(ctx context.Context, root string, upd
 		report.fail(err)
 		return report
 	}
-	report.Generation = publishToolGenerationLocked(ctx, root, installs, maxBytes)
+	report.Generation = publishToolGenerationLocked(ctx, catalog, root, installs, maxBytes)
 	if report.Generation.Partial || !report.Generation.Published {
 		report.fail(fmt.Errorf("successor publication incomplete: %s", report.Generation.Error))
 		return report
