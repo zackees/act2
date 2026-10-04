@@ -1,6 +1,7 @@
 package artifactcache
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -37,12 +38,13 @@ type Handler struct {
 	server   *http.Server
 	logger   logrus.FieldLogger
 
-	gcing           atomic.Bool
-	gcAt            time.Time
-	policy          Policy
-	stopMaintenance chan struct{}
-	maintenanceDone chan struct{}
-	cohortLease     *bbolt.DB
+	gcing            atomic.Bool
+	gcAt             time.Time
+	policy           Policy
+	stopMaintenance  chan struct{}
+	maintenanceDone  chan struct{}
+	cohortLease      *bbolt.DB
+	retentionOnClose *CohortReport
 
 	outboundIP        string
 	customExternalURL string
@@ -168,6 +170,12 @@ func (h *Handler) ExternalURL() string {
 }
 
 func (h *Handler) Close() error {
+	return h.CloseContext(context.Background())
+}
+
+// CloseContext closes the server and bounds optional aggregate maintenance
+// with the caller context and the maintenance operation deadline.
+func (h *Handler) CloseContext(ctx context.Context) error {
 	if h == nil {
 		return nil
 	}
@@ -197,6 +205,7 @@ func (h *Handler) Close() error {
 	if h.cohortLease != nil {
 		retErr = errors.Join(retErr, h.cohortLease.Close())
 		h.cohortLease = nil
+		h.maintainIdleCohort(ctx)
 	}
 	return retErr
 }

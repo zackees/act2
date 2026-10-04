@@ -60,3 +60,40 @@ func TestRepeatedFreshServersKeepImportedHitsAndBoundIdleCohort(t *testing.T) {
 	defer h.Close()
 	assertArchiveHit(t, h, "warm-0")
 }
+
+func TestFreshServerCloseAutomaticallyBoundsIdleCohortAndKeepsWarmHit(t *testing.T) {
+	root := t.TempDir()
+	warm := seedCohortStore(t, root, "warm", 1)
+	policy := DefaultPolicy()
+	policy.CohortRoot = root
+	policy.CohortMaxBytes = 160
+	for cycle := 0; cycle < 8; cycle++ {
+		seedCohortStore(t, root, fmt.Sprintf("cold-%d", cycle), 2)
+		h, err := StartHandlerWithPolicy(warm.dir, "", "127.0.0.1", 0, nil, policy)
+		require.NoError(t, err)
+		assertArchiveHit(t, h, "warm-0")
+		require.NoError(t, h.Close())
+		require.NotNil(t, h.RetentionOnClose())
+		require.False(t, h.RetentionOnClose().Partial, h.RetentionOnClose().Errors)
+		require.True(t, *h.RetentionOnClose().BudgetMet)
+		var total int64
+		for _, name := range append([]string{"warm"}, coldNamespaces(cycle)...) {
+			audit := AuditStore(context.Background(), filepath.Join(root, name), 0)
+			require.False(t, audit.Partial, audit.Errors)
+			total += *audit.ArchiveBytes
+		}
+		require.LessOrEqual(t, total, int64(160), "shutdown must maintain without an explicit prune call")
+	}
+	h, err := StartHandlerWithPolicy(warm.dir, "", "127.0.0.1", 0, nil, policy)
+	require.NoError(t, err)
+	defer h.Close()
+	assertArchiveHit(t, h, "warm-0")
+}
+
+func coldNamespaces(last int) []string {
+	var names []string
+	for i := 0; i <= last; i++ {
+		names = append(names, fmt.Sprintf("cold-%d", i))
+	}
+	return names
+}

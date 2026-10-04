@@ -72,6 +72,7 @@ func MaintainStore(ctx context.Context, dir string, policy Policy) StoreAudit {
 
 func openExistingMaintenanceDB(dir string) (*bolthold.Store, error) {
 	path := filepath.Join(dir, "bolt.db")
+	// #nosec G703 -- explicit caller-selected local metadata file.
 	info, err := os.Lstat(path)
 	if err != nil {
 		return nil, err

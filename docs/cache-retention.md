@@ -114,6 +114,37 @@ Aggregate machine budgeting, sustained warm-run benchmarks and Bosn integration
 remain open. The Bosn pin still selects released act2;
 this branch authorizes no host-cache deletion.
 
+## Automatic aggregate maintenance on shutdown (local candidate)
+
+`--cache-server-cohort-max-bytes BYTES` opts into aggregate maintenance when
+the cache server closes. It requires `--cache-server-cohort-root ROOT`, refuses
+negative values and defaults to zero (explicit aggregate maintenance only).
+Shutdown stops namespace maintenance and the HTTP server, releases the server's
+shared root lease, then attempts the existing five-second aggregate pass. Live
+peers or transfers defer the pass. The last normal server shutdown can reclaim
+idle namespaces without an external prune command. Recently used archives keep
+their grace period and may leave an explicitly reported protected overage.
+
+`RetentionOnClose()` exposes the typed outcome, also emitted as the
+`cache_retention` structured log field. Deferred/incomplete maintenance does not
+turn workflow cleanup into a failure. Repeated `Close` does not run a second
+pass. `CloseContext` propagates a caller's cancellation/deadline; the CLI uses
+an uncancelled cleanup context while the maintenance deadline remains bounded.
+Function-exit cleanup covers ordinary execution, watch exit and early errors.
+
+RED: 240 bytes remained after shutdown under a 160-byte aggregate ceiling.
+GREEN: eight cycles add cold archives and start fresh servers; each restores
+the warm 80-byte archive and shutdown leaves at most 160 completed archive bytes
+without an explicit prune. Active-peer deferral, last-peer retry, protected
+overflow, cancellation and lease release are covered. The cache race suite and
+targeted CLI tests pass; lint reports zero issues for both packages.
+
+This is normal-shutdown maintenance. A killed server cannot run it; deferred
+or protected work still needs a host maintenance retry. Allocated blocks,
+metadata, legacy retained sources and other cache classes remain outside this
+completed-archive ceiling. Bosn's automatic policy wiring and warm cutover
+remain open, and its released act2 pin does not yet expose these flags.
+
 ## Aggregate retention (local candidate)
 
 Servers can opt into `--cache-server-cohort-root ROOT`; their namespace must be

@@ -99,9 +99,11 @@ func (s *Storage) Serve(w http.ResponseWriter, r *http.Request, id uint64) {
 }
 
 func (s *Storage) Remove(id uint64) error {
+	// #nosec G703 -- configured local storage plus numeric cache ID.
 	if err := os.Remove(s.filename(id)); err != nil && !os.IsNotExist(err) {
 		return err
 	}
+	// #nosec G703 -- configured local temporary storage plus numeric cache ID.
 	return os.RemoveAll(s.tempDir(id))
 }
 

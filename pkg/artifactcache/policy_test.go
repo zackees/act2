@@ -46,12 +46,16 @@ func TestIdleServerExpiresOverBudgetArchives(t *testing.T) {
 }
 
 func TestInvalidRetentionPolicyRejectedBeforeStoreCreation(t *testing.T) {
-	for _, name := range []string{"negative-bytes", "zero-age", "zero-unused", "zero-interval"} {
+	for _, name := range []string{"negative-bytes", "negative-cohort-bytes", "cohort-without-root", "zero-age", "zero-unused", "zero-interval"} {
 		t.Run(name, func(t *testing.T) {
 			policy := DefaultPolicy()
 			switch name {
 			case "negative-bytes":
 				policy.MaxBytes = -1
+			case "negative-cohort-bytes":
+				policy.CohortMaxBytes = -1
+			case "cohort-without-root":
+				policy.CohortMaxBytes = 100
 			case "zero-age":
 				policy.MaxAge = 0
 			case "zero-unused":

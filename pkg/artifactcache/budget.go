@@ -71,6 +71,7 @@ func (h *Handler) trimBudget(ctx context.Context, db *bolthold.Store, report *Re
 func (h *Handler) deleteCache(db *bolthold.Store, cache *Cache, reason EvictionReason, report *RetentionReport) error {
 	var size int64
 	if cache.Complete {
+		// #nosec G703 -- local configured store plus numeric metadata ID.
 		info, err := os.Lstat(h.storage.filename(cache.ID))
 		if err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("measure deletion %d: %w", cache.ID, err)
@@ -103,6 +104,7 @@ func (h *Handler) measureBudget(ctx context.Context, caches []*Cache) (int64, ma
 		if err := ctx.Err(); err != nil {
 			return 0, nil, err
 		}
+		// #nosec G703 -- local configured store plus numeric metadata ID.
 		info, err := os.Lstat(h.storage.filename(cache.ID))
 		if os.IsNotExist(err) {
 			continue

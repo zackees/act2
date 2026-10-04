@@ -101,6 +101,7 @@ func closeCohort(stores []*maintainedNamespace) {
 }
 
 func openCohort(ctx context.Context, root string, policy Policy) ([]*maintainedNamespace, error) {
+	// #nosec G703 -- explicit caller-selected local cohort root.
 	info, err := os.Lstat(root)
 	if err != nil || !info.IsDir() {
 		return nil, fmt.Errorf("cohort root is not a directory")

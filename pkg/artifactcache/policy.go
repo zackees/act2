@@ -12,10 +12,13 @@ type Policy struct {
 	// CohortRoot enrolls new namespaces in exclusive aggregate maintenance.
 	// Existing legacy namespaces cannot be enrolled implicitly.
 	CohortRoot string
-	MaxBytes   int64
-	MaxAge     time.Duration
-	UnusedAge  time.Duration
-	GCInterval time.Duration
+	// CohortMaxBytes enables aggregate maintenance after cohort lease release.
+	// Zero leaves aggregate maintenance to an explicit caller.
+	CohortMaxBytes int64
+	MaxBytes       int64
+	MaxAge         time.Duration
+	UnusedAge      time.Duration
+	GCInterval     time.Duration
 }
 
 func DefaultPolicy() Policy {
@@ -23,6 +26,12 @@ func DefaultPolicy() Policy {
 }
 
 func (p Policy) Validate() error {
+	if p.CohortMaxBytes < 0 {
+		return fmt.Errorf("cohort maximum bytes must not be negative")
+	}
+	if p.CohortMaxBytes > 0 && p.CohortRoot == "" {
+		return fmt.Errorf("cohort maximum bytes requires an explicit cohort root")
+	}
 	if p.MaxBytes < 0 {
 		return fmt.Errorf("cache maximum bytes must not be negative")
 	}
