@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -147,4 +148,40 @@ func TestToolGenerationUpdateDoesNotBootstrapAfterLostSelection(t *testing.T) {
 	require.False(t, report.Selected)
 	_, err := os.Lstat(pointer)
 	require.True(t, os.IsNotExist(err))
+}
+
+func TestToolGenerationSelectionOwnedStageRecoveryPreservesWarmPointer(t *testing.T) {
+	store, spec := toolGenerationFixture(t)
+	report := updateToolGenerationWithSelectionSync(context.Background(), store, spec, 100, true, func(string) error { return fmt.Errorf("lost selection durability acknowledgement") })
+	require.True(t, report.Partial)
+	require.True(t, report.Selected)
+	require.NotEmpty(t, report.PendingSelection, "uncertain selection stage must remain owned and recoverable")
+	before, err := os.ReadFile(filepath.Join(store, toolGenerationCurrent))
+	require.NoError(t, err)
+	info, err := os.Lstat(report.PendingSelection)
+	require.NoError(t, err)
+	require.True(t, info.IsDir())
+	rows, err := loadToolStageOwnership(nil, store)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	recovery := RetireToolStages(context.Background(), store, time.Now().Add(time.Hour), 1000)
+	require.False(t, recovery.Partial, recovery.Error)
+	require.Contains(t, recovery.RetiredStages, report.PendingSelection)
+	_, err = os.Lstat(report.PendingSelection)
+	require.True(t, os.IsNotExist(err))
+	after, err := os.ReadFile(filepath.Join(store, toolGenerationCurrent))
+	require.NoError(t, err)
+	require.Equal(t, before, after)
+	current, err := CurrentToolGeneration(context.Background(), store, 100)
+	require.NoError(t, err)
+	require.Equal(t, report.Generation.ID, current.ID)
+	rows, err = loadToolStageOwnership(nil, store)
+	require.NoError(t, err)
+	require.Empty(t, rows)
+	retry := UpdateToolGeneration(context.Background(), store, spec, 100)
+	require.False(t, retry.Partial, retry.Error)
+	require.Empty(t, retry.PendingSelection)
+	rows, err = loadToolStageOwnership(nil, store)
+	require.NoError(t, err)
+	require.Empty(t, rows, "successful selection must not accumulate ownership records")
 }

@@ -76,7 +76,7 @@ func updateToolGenerationWithSelectionSync(ctx context.Context, root string, upd
 		return report
 	}
 	selection = ToolGenerationSelection{SchemaVersion: 1, ID: report.Generation.ID}
-	report.Selected, report.PendingSelection, err = writeToolGenerationSelection(root, selection, syncSelection)
+	report.Selected, report.PendingSelection, err = writeToolGenerationSelection(ctx, catalog, root, selection, syncSelection)
 	if err != nil {
 		report.fail(err)
 	}
@@ -149,40 +149,54 @@ func verifySelectedToolGeneration(ctx context.Context, root string, selection To
 	return manifest, reader.Close()
 }
 
-func writeToolGenerationSelection(root string, selection ToolGenerationSelection, syncSelection func(string) error) (selected bool, pending string, err error) {
+func writeToolGenerationSelection(ctx context.Context, catalog transferLease, root string, selection ToolGenerationSelection, syncSelection func(string) error) (selected bool, pending string, err error) {
 	data, err := json.Marshal(selection)
 	if err != nil {
 		return false, "", err
 	}
-	stage, err := os.CreateTemp(root, ".tool-current-stage-")
+	directory, err := createOwnedToolStage(catalog, root, root, ".tool-stage-")
+	pending = directory
 	if err != nil {
-		return false, "", err
+		return false, pending, err
 	}
-	name := stage.Name()
-	pending = name
 	defer func() {
-		if pending == "" {
+		// Preserve ownership after an uncertain selection rename/sync. Recovery
+		// expires only this original private directory, never the warm pointer.
+		if selected && err != nil {
 			return
 		}
-		if cleanupErr := os.Remove(name); cleanupErr != nil && !os.IsNotExist(cleanupErr) {
+		if cleanupErr := cleanupOwnedToolStage(ctx, catalog, root, directory); cleanupErr != nil {
 			err = fmt.Errorf("selection stage cleanup failed after %v: %w", err, cleanupErr)
 		} else {
 			pending = ""
 		}
 	}()
-	if _, err := stage.Write(data); err != nil {
-		_ = stage.Close()
+	name := filepath.Join(directory, "selection.json")
+	// #nosec G703 -- Fixed leaf inside newly owned private stage under catalog exclusion.
+	stage, err := os.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
 		return false, pending, err
 	}
-	if err := stage.Sync(); err != nil {
-		_ = stage.Close()
+	_, writeErr := stage.Write(data)
+	syncErr := stage.Sync()
+	closeErr := stage.Close()
+	if writeErr != nil {
+		return false, pending, writeErr
+	}
+	if syncErr != nil {
+		return false, pending, syncErr
+	}
+	if closeErr != nil {
+		return false, pending, closeErr
+	}
+	if err := syncToolDirectory(directory); err != nil {
 		return false, pending, err
 	}
-	if err := stage.Close(); err != nil {
+	if err := ctx.Err(); err != nil {
 		return false, pending, err
 	}
 	if err := os.Rename(name, filepath.Join(root, toolGenerationCurrent)); err != nil {
 		return false, pending, err
 	}
-	return true, "", syncSelection(root)
+	return true, pending, syncSelection(root)
 }
