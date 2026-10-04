@@ -93,15 +93,7 @@ func (sd *stepDocker) newStepContainer(ctx context.Context, image string, cmd []
 	rc := sd.RunContext
 	step := sd.Step
 
-	rawLogger := common.Logger(ctx).WithField("raw_output", true)
-	logWriter := common.NewLineWriter(rc.commandHandler(ctx), func(s string) bool {
-		if rc.Config.LogOutput {
-			rawLogger.Infof("%s", s)
-		} else {
-			rawLogger.Debugf("%s", s)
-		}
-		return true
-	})
+	stdout, stderr := rawLogWriters(common.Logger(ctx), rc.commandHandler(ctx), rc.Config.LogOutput)
 	envList := make([]string, 0)
 	for k, v := range sd.env {
 		envList = append(envList, fmt.Sprintf("%s=%s", k, v))
@@ -125,8 +117,8 @@ func (sd *stepDocker) newStepContainer(ctx context.Context, image string, cmd []
 		Mounts:      mounts,
 		NetworkMode: fmt.Sprintf("container:%s", rc.jobContainerName()),
 		Binds:       binds,
-		Stdout:      logWriter,
-		Stderr:      logWriter,
+		Stdout:      stdout,
+		Stderr:      stderr,
 		Privileged:  rc.Config.Privileged,
 		UsernsMode:  rc.Config.UsernsMode,
 		Platform:    rc.Config.ContainerArchitecture,

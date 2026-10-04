@@ -387,15 +387,7 @@ func evalDockerArgs(ctx context.Context, step step, action *model.Action, cmd *[
 func newStepContainer(ctx context.Context, step step, image string, cmd []string, entrypoint []string) container.Container {
 	rc := step.getRunContext()
 	stepModel := step.getStepModel()
-	rawLogger := common.Logger(ctx).WithField("raw_output", true)
-	logWriter := common.NewLineWriter(rc.commandHandler(ctx), func(s string) bool {
-		if rc.Config.LogOutput {
-			rawLogger.Infof("%s", s)
-		} else {
-			rawLogger.Debugf("%s", s)
-		}
-		return true
-	})
+	stdout, stderr := rawLogWriters(common.Logger(ctx), rc.commandHandler(ctx), rc.Config.LogOutput)
 	envList := make([]string, 0)
 	for k, v := range *step.getEnv() {
 		envList = append(envList, fmt.Sprintf("%s=%s", k, v))
@@ -428,8 +420,8 @@ func newStepContainer(ctx context.Context, step step, image string, cmd []string
 		Mounts:      mounts,
 		NetworkMode: networkMode,
 		Binds:       binds,
-		Stdout:      logWriter,
-		Stderr:      logWriter,
+		Stdout:      stdout,
+		Stderr:      stderr,
 		Privileged:  rc.Config.Privileged,
 		UsernsMode:  rc.Config.UsernsMode,
 		Platform:    rc.Config.ContainerArchitecture,

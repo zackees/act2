@@ -33,6 +33,9 @@ type HostEnvironment struct {
 	ActPath   string
 	CleanUp   func()
 	StdOut    io.Writer
+	StdErr    io.Writer
+	// JSON logging needs the original pipes; a PTY merges them.
+	SeparateStreams bool
 }
 
 func (e *HostEnvironment) Create(_ []string, _ []string) common.Executor {
@@ -304,7 +307,10 @@ func (e *HostEnvironment) exec(ctx context.Context, command []string, cmdline st
 	cmd.Stdin = nil
 	cmd.Stdout = e.StdOut
 	cmd.Env = envList
-	cmd.Stderr = e.StdOut
+	cmd.Stderr = e.StdErr
+	if cmd.Stderr == nil {
+		cmd.Stderr = e.StdOut
+	}
 	cmd.Dir = wd
 	cmd.SysProcAttr = getSysProcAttr(cmdline, false)
 	var ppty *os.File
@@ -317,7 +323,7 @@ func (e *HostEnvironment) exec(ctx context.Context, command []string, cmdline st
 			tty.Close()
 		}
 	}()
-	if true /* allocate Terminal */ {
+	if !e.SeparateStreams {
 		var err error
 		ppty, tty, err = setupPty(cmd, cmdline)
 		if err != nil {
@@ -461,10 +467,14 @@ func (e *HostEnvironment) GetHealth(_ context.Context) Health {
 	return HealthHealthy
 }
 
-func (e *HostEnvironment) ReplaceLogWriter(stdout io.Writer, _ io.Writer) (io.Writer, io.Writer) {
-	org := e.StdOut
+func (e *HostEnvironment) ReplaceLogWriter(stdout io.Writer, stderr io.Writer) (io.Writer, io.Writer) {
+	oldout, olderr := e.StdOut, e.StdErr
+	if olderr == nil {
+		olderr = oldout
+	}
 	e.StdOut = stdout
-	return org, org
+	e.StdErr = stderr
+	return oldout, olderr
 }
 
 func (*HostEnvironment) IsEnvironmentCaseInsensitive() bool {

@@ -216,16 +216,7 @@ func (rc *RunContext) getBindsAndMounts(convert func(string) string) ([]string, 
 
 func (rc *RunContext) startHostEnvironment() common.Executor {
 	return func(ctx context.Context) error {
-		logger := common.Logger(ctx)
-		rawLogger := logger.WithField("raw_output", true)
-		logWriter := common.NewLineWriter(rc.commandHandler(ctx), func(s string) bool {
-			if rc.Config.LogOutput {
-				rawLogger.Infof("%s", s)
-			} else {
-				rawLogger.Debugf("%s", s)
-			}
-			return true
-		})
+		stdout, stderr := rawLogWriters(common.Logger(ctx), rc.commandHandler(ctx), rc.Config.LogOutput)
 		cacheDir := rc.ActionCacheDir()
 		randBytes := make([]byte, 8)
 		_, _ = rand.Read(randBytes)
@@ -252,7 +243,9 @@ func (rc *RunContext) startHostEnvironment() common.Executor {
 			CleanUp: func() {
 				os.RemoveAll(miscpath)
 			},
-			StdOut: logWriter,
+			StdOut:          stdout,
+			StdErr:          stderr,
+			SeparateStreams: rc.Config.JSONLogger,
 		}
 		rc.cleanUpJobContainer = rc.JobContainer.Remove()
 		for k, v := range rc.JobContainer.GetRunnerContext(ctx) {
@@ -309,15 +302,7 @@ func (rc *RunContext) startJobContainer() common.Executor {
 		rc.setRunnerEnvironment(runnerEnvironmentHosted)
 		logger := common.Logger(ctx)
 		image := rc.platformImage(ctx)
-		rawLogger := logger.WithField("raw_output", true)
-		logWriter := common.NewLineWriter(rc.commandHandler(ctx), func(s string) bool {
-			if rc.Config.LogOutput {
-				rawLogger.Infof("%s", s)
-			} else {
-				rawLogger.Debugf("%s", s)
-			}
-			return true
-		})
+		stdout, stderr := rawLogWriters(logger, rc.commandHandler(ctx), rc.Config.LogOutput)
 
 		username, password, err := rc.handleCredentials(ctx)
 		if err != nil {
@@ -390,8 +375,8 @@ func (rc *RunContext) startJobContainer() common.Executor {
 				Env:            envs,
 				Mounts:         serviceMounts,
 				Binds:          serviceBinds,
-				Stdout:         logWriter,
-				Stderr:         logWriter,
+				Stdout:         stdout,
+				Stderr:         stderr,
 				Privileged:     rc.Config.Privileged,
 				UsernsMode:     rc.Config.UsernsMode,
 				Platform:       rc.Config.ContainerArchitecture,
@@ -456,8 +441,8 @@ func (rc *RunContext) startJobContainer() common.Executor {
 			NetworkMode:    jobContainerNetwork,
 			NetworkAliases: []string{rc.Name},
 			Binds:          binds,
-			Stdout:         logWriter,
-			Stderr:         logWriter,
+			Stdout:         stdout,
+			Stderr:         stderr,
 			Privileged:     rc.Config.Privileged,
 			UsernsMode:     rc.Config.UsernsMode,
 			Platform:       rc.Config.ContainerArchitecture,
