@@ -344,13 +344,15 @@ func execAsDocker(ctx context.Context, step actionStep, actionName, basedir, sub
 		}
 	}
 	stepContainer := newStepContainer(ctx, step, image, cmd, entrypoint)
+	transfer := newHostDockerTransfer(rc)
 	return common.NewPipelineExecutor(
 		prepImage,
 		stepContainer.Pull(forcePull),
 		stepContainer.Remove().IfBool(!rc.Config.ReuseContainers),
 		stepContainer.Create(rc.Config.ContainerCapAdd, rc.Config.ContainerCapDrop),
+		transfer.stage(stepContainer),
 		stepContainer.Start(true),
-	).Finally(
+	).Finally(transfer.restore(stepContainer)).Finally(
 		stepContainer.Remove().IfBool(!rc.Config.ReuseContainers),
 	).Finally(stepContainer.Close())(ctx)
 }
@@ -390,7 +392,7 @@ func newStepContainer(ctx context.Context, step step, image string, cmd []string
 	stdout, stderr := rawLogWriters(common.Logger(ctx), rc.commandHandler(ctx), rc.Config.LogOutput)
 	envList := make([]string, 0)
 	for k, v := range *step.getEnv() {
-		envList = append(envList, fmt.Sprintf("%s=%s", k, v))
+		envList = append(envList, fmt.Sprintf("%s=%s", k, hostDockerEnv(rc, k, v)))
 	}
 
 	envList = append(envList, fmt.Sprintf("%s=%s", "RUNNER_TOOL_CACHE", "/opt/hostedtoolcache"))
