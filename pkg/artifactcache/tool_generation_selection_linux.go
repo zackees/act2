@@ -27,7 +27,13 @@ func updateToolGenerationWithSelectionSync(ctx context.Context, root string, upd
 		report.fail(err)
 		return report
 	}
-	catalog, err := prepareExistingToolSnapshotStore(root)
+	var catalog transferLease
+	var err error
+	if initialize {
+		catalog, err = prepareExistingToolSnapshotStore(root)
+	} else {
+		catalog, err = prepareToolGenerationUpdateCatalog(ctx, root)
+	}
 	if err != nil {
 		report.fail(err)
 		return report
