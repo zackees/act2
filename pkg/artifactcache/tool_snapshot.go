@@ -21,11 +21,15 @@ type ToolSnapshotReport struct {
 
 func (r *ToolSnapshotReport) fail(err error) {
 	r.Partial = true
+	r.Error = toolReportError(err)
+}
+
+func toolReportError(err error) string {
 	message := []rune(err.Error())
 	if len(message) > 256 {
 		message = message[:256]
 	}
-	r.Error = string(message)
+	return string(message)
 }
 
 // PublishToolSnapshot requires a completed, quiescent install. It copies into a

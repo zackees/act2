@@ -76,6 +76,10 @@ func scanToolTree(ctx context.Context, root, completion string, maxBytes int64) 
 // Page directory reads before applying the global entry bound. Depth limits
 // both recursion and open descriptors; no symlink is followed during the walk.
 func walkToolTree(ctx context.Context, path string, depth int, visit func(string, fs.DirEntry) error) error {
+	return walkToolTreeWithDepth(ctx, path, depth, 64, visit)
+}
+
+func walkToolTreeWithDepth(ctx context.Context, path string, depth, maxDepth int, visit func(string, fs.DirEntry) error) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -90,7 +94,7 @@ func walkToolTree(ctx context.Context, path string, depth int, visit func(string
 	if !info.IsDir() {
 		return nil
 	}
-	if depth >= 64 {
+	if depth >= maxDepth {
 		return fmt.Errorf("tool inventory depth limit exceeded")
 	}
 	// #nosec G703 -- The traversal just verified this nonsymlink directory; source writers must be excluded.
@@ -105,7 +109,7 @@ func walkToolTree(ctx context.Context, path string, depth int, visit func(string
 		}
 		entries, readErr := dir.ReadDir(256)
 		for _, entry := range entries {
-			if err := walkToolTree(ctx, filepath.Join(path, entry.Name()), depth+1, visit); err != nil {
+			if err := walkToolTreeWithDepth(ctx, filepath.Join(path, entry.Name()), depth+1, maxDepth, visit); err != nil {
 				return err
 			}
 		}
