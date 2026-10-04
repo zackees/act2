@@ -118,10 +118,14 @@ func unsupportedImmutableGitPin(err error, pin plumbing.Hash) bool {
 		return true
 	}
 	var refusal *pktline.ErrorLine
-	if !errors.As(err, &refusal) {
-		return false
+	if errors.As(err, &refusal) {
+		return refusal.Text == "upload-pack: not our ref" || refusal.Text == "upload-pack: not our ref "+pin.String()
 	}
-	return refusal.Text == "upload-pack: not our ref" || refusal.Text == "upload-pack: not our ref "+pin.String()
+	// go-git v5.16.5's transport/internal/common.go wraps this protocol error
+	// with %s, erasing ErrorLine's type. Accept only its complete, exact refusal
+	// rendering; never a substring, arbitrary HTTP error or malformed pack.
+	const refusalMessage = "error decoding upload-pack response: upload-pack: not our ref"
+	return err.Error() == refusalMessage || err.Error() == refusalMessage+" "+pin.String()
 }
 
 func verifyImmutableGitCheckout(ctx context.Context, repo *gogit.Repository, pin plumbing.Hash) error {
