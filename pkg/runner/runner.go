@@ -260,7 +260,11 @@ func runPlannedJob(ctx context.Context, rc *RunContext, matrix map[string]interf
 	if err != nil {
 		return err
 	}
-	err = executor(common.WithJobErrorContainer(WithJobLogger(ctx, rc.Run.JobID, jobName, rc.Config, &rc.Masks, matrix)))
+	jobCtx := WithJobLogger(ctx, rc.Run.JobID, jobName, rc.Config, &rc.Masks, matrix)
+	if identity := rc.jobPath(); len(identity) > 0 {
+		jobCtx = common.WithLogger(jobCtx, common.Logger(jobCtx).WithField("jobPath", identity))
+	}
+	err = executor(common.WithJobErrorContainer(jobCtx))
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
