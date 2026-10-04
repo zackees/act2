@@ -73,31 +73,8 @@ func readToolRecoveryPinRecords(ctx context.Context, root string, now time.Time)
 		if !canonicalRecoveryID(owner) || entry.Name() != owner+".json" {
 			return nil, fmt.Errorf("recovery pin filename is invalid")
 		}
-		path := filepath.Join(directory, entry.Name())
-		info, err := os.Lstat(path)
-		if err != nil || !info.Mode().IsRegular() || info.Size() > toolRecoveryPinBytes {
-			return nil, fmt.Errorf("recovery pin is not a bounded regular record")
-		}
-		file, err := os.Open(path)
+		pin, err := readToolRecoveryPinRecord(directory, owner)
 		if err != nil {
-			return nil, err
-		}
-		data, readErr := io.ReadAll(io.LimitReader(file, toolRecoveryPinBytes+1))
-		closeErr := file.Close()
-		if readErr != nil || closeErr != nil || len(data) > toolRecoveryPinBytes {
-			return nil, fmt.Errorf("recovery pin read failed or exceeded bound")
-		}
-		var pin ToolRecoveryPin
-		decoder := json.NewDecoder(bytes.NewReader(data))
-		decoder.DisallowUnknownFields()
-		if err := decoder.Decode(&pin); err != nil {
-			return nil, fmt.Errorf("recovery pin record is invalid: %w", err)
-		}
-		canonical, err := json.Marshal(pin)
-		if err != nil || !bytes.Equal(canonical, data) || pin.Owner != owner {
-			return nil, fmt.Errorf("recovery pin is not canonical or owner-bound")
-		}
-		if err := pin.validate(); err != nil {
 			return nil, err
 		}
 		if pin.CreatedAt.After(now) {
@@ -108,7 +85,6 @@ func readToolRecoveryPinRecords(ctx context.Context, root string, now time.Time)
 				return nil, fmt.Errorf("active recovery pin lower is invalid: %w", err)
 			}
 			verifiedGenerations[pin.Generation] = true
-
 		}
 		records[pin.Owner] = pin
 	}
@@ -131,4 +107,35 @@ func protectedToolRecoveryPins(records map[string]ToolRecoveryPin, now time.Time
 		}
 	}
 	return protected
+}
+
+func readToolRecoveryPinRecord(directory, owner string) (ToolRecoveryPin, error) {
+	path := filepath.Join(directory, owner+".json")
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Size() > toolRecoveryPinBytes {
+		return ToolRecoveryPin{}, fmt.Errorf("recovery pin is not a bounded regular record")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return ToolRecoveryPin{}, err
+	}
+	data, readErr := io.ReadAll(io.LimitReader(file, toolRecoveryPinBytes+1))
+	closeErr := file.Close()
+	if readErr != nil || closeErr != nil || len(data) > toolRecoveryPinBytes {
+		return ToolRecoveryPin{}, fmt.Errorf("recovery pin read failed or exceeded bound")
+	}
+	var pin ToolRecoveryPin
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&pin); err != nil {
+		return ToolRecoveryPin{}, fmt.Errorf("recovery pin record is invalid: %w", err)
+	}
+	canonical, err := json.Marshal(pin)
+	if err != nil || !bytes.Equal(canonical, data) || pin.Owner != owner {
+		return ToolRecoveryPin{}, fmt.Errorf("recovery pin is not canonical or owner-bound")
+	}
+	if err := pin.validate(); err != nil {
+		return ToolRecoveryPin{}, err
+	}
+	return pin, nil
 }
