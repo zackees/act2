@@ -162,6 +162,116 @@ func TestGraphEvent(t *testing.T) {
 	assert.Equal(t, 0, len(plan.Stages))
 }
 
+func TestRecordedJobFailureDoesNotAbortLaterStages(t *testing.T) {
+	planner, err := model.NewWorkflowPlanner("testdata/basic", true, false)
+	assert.NoError(t, err)
+	plan, err := planner.PlanEvent("push")
+	assert.NoError(t, err)
+
+	r := &runnerImpl{config: &Config{EventName: "push", Platforms: platforms}, eventJSON: "{}"}
+	var visited []string
+	executor := r.newPlanExecutor(plan, func(rc *RunContext) (common.Executor, error) {
+		return func(context.Context) error {
+			visited = append(visited, rc.Run.JobID)
+			if rc.Run.JobID == "check" {
+				rc.Run.Job().Result = "failure"
+				return context.DeadlineExceeded
+			}
+			rc.Run.Job().Result = "success"
+			return nil
+		}, nil
+	})
+	err = executor(context.Background())
+	assert.ErrorContains(t, err, "Job 'check' failed")
+	assert.Equal(t, []string{"check", "build", "test"}, visited)
+}
+
+func TestCleanupFailurePreservesDependenciesButFailsRun(t *testing.T) {
+	planner, err := model.NewWorkflowPlanner("testdata/basic", true, false)
+	assert.NoError(t, err)
+	plan, err := planner.PlanEvent("push")
+	assert.NoError(t, err)
+
+	r := &runnerImpl{config: &Config{EventName: "push", Platforms: platforms}, eventJSON: "{}"}
+	var visited []string
+	executor := r.newPlanExecutor(plan, func(rc *RunContext) (common.Executor, error) {
+		return func(context.Context) error {
+			visited = append(visited, rc.Run.JobID)
+			rc.Run.Job().Result = "success"
+			if rc.Run.JobID == "check" {
+				rc.cleanupError = context.DeadlineExceeded
+				return context.DeadlineExceeded
+			}
+			return nil
+		}, nil
+	})
+	err = executor(context.Background())
+	assert.ErrorContains(t, err, "job check container cleanup")
+	assert.Equal(t, []string{"check", "build", "test"}, visited)
+}
+
+func TestReusableWorkflowCleanupFailureReachesOuterRun(t *testing.T) {
+	planner, err := model.NewWorkflowPlanner("testdata/basic", true, false)
+	assert.NoError(t, err)
+	outerPlan, err := planner.PlanEvent("push")
+	assert.NoError(t, err)
+	innerPlan, err := planner.PlanEvent("push")
+	assert.NoError(t, err)
+
+	r := &runnerImpl{config: &Config{EventName: "push", Platforms: platforms}, eventJSON: "{}"}
+	inner := r.newPlanExecutor(innerPlan, func(rc *RunContext) (common.Executor, error) {
+		return func(context.Context) error {
+			rc.Run.Job().Result = "success"
+			if rc.Run.JobID == "check" {
+				rc.cleanupError = context.DeadlineExceeded
+				return context.DeadlineExceeded
+			}
+			return nil
+		}, nil
+	})
+	var outerVisited []string
+	outer := r.newPlanExecutor(outerPlan, func(rc *RunContext) (common.Executor, error) {
+		return func(ctx context.Context) error {
+			outerVisited = append(outerVisited, rc.Run.JobID)
+			if rc.Run.JobID == "check" {
+				if err := inner(ctx); err != nil {
+					rc.Run.Job().Result = "failure"
+					return err
+				}
+			}
+			rc.Run.Job().Result = "success"
+			return nil
+		}, nil
+	})
+	err = outer(context.Background())
+	assert.ErrorContains(t, err, "job check container cleanup")
+	assert.Equal(t, []string{"check", "build", "test"}, outerVisited)
+}
+
+func TestCleanupAndOutputFailuresReachRun(t *testing.T) {
+	planner, err := model.NewWorkflowPlanner("testdata/basic", true, false)
+	assert.NoError(t, err)
+	plan, err := planner.PlanEvent("push")
+	assert.NoError(t, err)
+
+	r := &runnerImpl{config: &Config{EventName: "push", Platforms: platforms}, eventJSON: "{}"}
+	executor := r.newPlanExecutor(plan, func(rc *RunContext) (common.Executor, error) {
+		return func(context.Context) error {
+			if rc.Run.JobID == "check" {
+				rc.cleanupError = context.DeadlineExceeded
+				rc.Run.Job().Result = "failure"
+				return fmt.Errorf("cleanup: %v; output failure", context.DeadlineExceeded)
+			}
+			rc.Run.Job().Result = "success"
+			return nil
+		}, nil
+	})
+	err = executor(context.Background())
+	assert.ErrorContains(t, err, "context deadline exceeded")
+	assert.ErrorContains(t, err, "output failure")
+	assert.ErrorContains(t, err, "Job 'check' failed")
+}
+
 type TestJobFileInfo struct {
 	workdir      string
 	workflowPath string

@@ -51,6 +51,7 @@ type RunContext struct {
 	Parent              *RunContext
 	Masks               []string
 	cleanUpJobContainer common.Executor
+	cleanupError        error   // Infrastructure failure; job steps may still have succeeded.
 	caller              *caller // job calling this RunContext (reusable workflows)
 	Cancelled           bool
 	nodeToolFullPath    string

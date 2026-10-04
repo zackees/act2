@@ -113,6 +113,7 @@ func newJobExecutor(info jobInfo, sf stepFactory, rc *RunContext) common.Executo
 			logger.Infof("Cleaning up container for job %s", rc.JobName)
 			if err = info.stopContainer()(ctx); err != nil {
 				logger.Errorf("Error while stop job container: %v", err)
+				rc.cleanupError = err
 			}
 		}
 		return err
@@ -128,6 +129,11 @@ func newJobExecutor(info jobInfo, sf stepFactory, rc *RunContext) common.Executo
 	pipeline := make([]common.Executor, 0)
 	pipeline = append(pipeline, preSteps...)
 	pipeline = append(pipeline, steps...)
+	completeJob := common.NewInfoExecutor("\u2B50 Run Complete job").
+		Finally(stopContainerExecutor).
+		Finally(info.interpolateOutputs().Finally(info.closeContainer()).ThenError(setJobError)).
+		Then(common.NewFieldExecutor("stepResult", model.StepStatusSuccess, common.NewInfoExecutor("  \u2705  Success - Complete job"))).
+		OnError(common.NewFieldExecutor("stepResult", model.StepStatusFailure, common.NewInfoExecutor("  \u274C  Failure - Complete job")))
 
 	return common.NewPipelineExecutor(
 		common.NewFieldExecutor("step", "Set up job", common.NewFieldExecutor("stepid", []string{"--setup-job"},
@@ -146,12 +152,7 @@ func newJobExecutor(info jobInfo, sf stepFactory, rc *RunContext) common.Executo
 				return postExecutor(ctx)
 			}).
 			Finally(common.NewFieldExecutor("step", "Complete job", common.NewFieldExecutor("stepid", []string{"--complete-job"},
-				common.NewInfoExecutor("\u2B50 Run Complete job").
-					Finally(stopContainerExecutor).
-					Finally(
-						info.interpolateOutputs().Finally(info.closeContainer()).Then(common.NewFieldExecutor("stepResult", model.StepStatusSuccess, common.NewInfoExecutor("  \u2705  Success - Complete job"))).
-							OnError(common.NewFieldExecutor("stepResult", model.StepStatusFailure, common.NewInfoExecutor("  \u274C  Failure - Complete job"))),
-					))))).Finally(setJobResultExecutor)
+				completeJob)))).Finally(setJobResultExecutor)
 }
 
 func setJobResult(ctx context.Context, info jobInfo, rc *RunContext, success bool) {
@@ -177,6 +178,8 @@ func setJobResult(ctx context.Context, info jobInfo, rc *RunContext, success boo
 	jobResultMessage := "succeeded"
 	if jobResult != "success" {
 		jobResultMessage = "failed"
+	} else if rc.cleanupError != nil {
+		jobResultMessage = "steps succeeded, container cleanup failed"
 	}
 
 	logger.WithField("jobResult", jobResult).Infof("\U0001F3C1  Job %s", jobResultMessage)

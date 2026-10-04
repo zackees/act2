@@ -337,3 +337,66 @@ func TestNewJobExecutor(t *testing.T) {
 		})
 	}
 }
+
+func TestCleanupFailureIsReportedSeparately(t *testing.T) {
+	ctx := common.WithJobErrorContainer(context.Background())
+	jim := &jobInfoMock{}
+	sfm := &stepFactoryMock{}
+	stepModel := &model.Step{ID: "run"}
+	step := &stepMock{}
+	rc := &RunContext{
+		JobContainer:     &jobContainerMock{},
+		Run:              &model.Run{JobID: "test", Workflow: &model.Workflow{Jobs: map[string]*model.Job{"test": {}}}},
+		Config:           &Config{AutoRemove: true},
+		nodeToolFullPath: "node",
+	}
+	rc.ExprEval = rc.NewExpressionEvaluator(ctx)
+
+	jim.On("steps").Return([]*model.Step{stepModel})
+	jim.On("matrix").Return(map[string]interface{}{})
+	jim.On("startContainer").Return(func(context.Context) error { return nil })
+	jim.On("stopContainer").Return(func(context.Context) error { return context.DeadlineExceeded })
+	jim.On("interpolateOutputs").Return(func(context.Context) error { return nil })
+	jim.On("closeContainer").Return(func(context.Context) error { return nil })
+	jim.On("result", "success").Once()
+	sfm.On("newStep", stepModel, rc).Return(step, nil)
+	step.On("pre").Return(func(context.Context) error { return nil })
+	step.On("main").Return(func(context.Context) error { return nil })
+	step.On("post").Return(func(context.Context) error { return nil })
+
+	err := newJobExecutor(jim, sfm, rc)(ctx)
+	assert.ErrorContains(t, err, context.DeadlineExceeded.Error())
+	assert.ErrorIs(t, rc.cleanupError, context.DeadlineExceeded)
+	jim.AssertExpectations(t)
+}
+
+func TestCleanupAndOutputFailuresAreBothReported(t *testing.T) {
+	ctx := common.WithJobErrorContainer(context.Background())
+	jim := &jobInfoMock{}
+	sfm := &stepFactoryMock{}
+	stepModel := &model.Step{ID: "run"}
+	step := &stepMock{}
+	rc := &RunContext{
+		JobContainer:     &jobContainerMock{},
+		Run:              &model.Run{JobID: "test", Workflow: &model.Workflow{Jobs: map[string]*model.Job{"test": {}}}},
+		Config:           &Config{AutoRemove: true},
+		nodeToolFullPath: "node",
+	}
+	rc.ExprEval = rc.NewExpressionEvaluator(ctx)
+	jim.On("steps").Return([]*model.Step{stepModel})
+	jim.On("matrix").Return(map[string]interface{}{})
+	jim.On("startContainer").Return(func(context.Context) error { return nil })
+	jim.On("stopContainer").Return(func(context.Context) error { return context.DeadlineExceeded })
+	jim.On("interpolateOutputs").Return(func(context.Context) error { return fmt.Errorf("output failure") })
+	jim.On("closeContainer").Return(func(context.Context) error { return nil })
+	jim.On("result", "failure").Once()
+	sfm.On("newStep", stepModel, rc).Return(step, nil)
+	step.On("pre").Return(func(context.Context) error { return nil })
+	step.On("main").Return(func(context.Context) error { return nil })
+	step.On("post").Return(func(context.Context) error { return nil })
+
+	err := newJobExecutor(jim, sfm, rc)(ctx)
+	assert.ErrorContains(t, err, context.DeadlineExceeded.Error())
+	assert.ErrorContains(t, err, "output failure")
+	jim.AssertExpectations(t)
+}
