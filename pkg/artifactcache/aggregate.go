@@ -147,7 +147,7 @@ func openCohort(ctx context.Context, root string, policy Policy) ([]*maintainedN
 		if err != nil {
 			return nil, err
 		}
-		before := auditLocked(ctx, h, store.db, 0)
+		before := auditInventory(ctx, h, store.db, 0, true)
 		if before.Partial {
 			return nil, fmt.Errorf("namespace %s has an incomplete inventory: %v", entry.Name(), before.Errors)
 		}

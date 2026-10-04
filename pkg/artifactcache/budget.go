@@ -82,10 +82,13 @@ func (h *Handler) deleteCache(db *bolthold.Store, cache *Cache, reason EvictionR
 			size = info.Size()
 		}
 	}
+	if err := db.Upsert(cache.ID, &DeletionIntent{Cache: *cache, Reason: reason}); err != nil {
+		return fmt.Errorf("record cache deletion %d: %w", cache.ID, err)
+	}
 	if err := h.storage.Remove(cache.ID); err != nil {
 		return fmt.Errorf("expire cache %d: %w", cache.ID, err)
 	}
-	if err := db.Delete(cache.ID, cache); err != nil {
+	if err := finishDeletion(db, cache); err != nil {
 		return fmt.Errorf("expire cache metadata %d: %w", cache.ID, err)
 	}
 	report.record(cache.ID, reason, size)

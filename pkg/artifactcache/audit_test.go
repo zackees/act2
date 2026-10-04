@@ -167,3 +167,22 @@ func TestAuditReadOnlyMountedFixture(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, before, after)
 }
+
+func TestArchiveInventoryBoundsAndCancellation(t *testing.T) {
+	dir := t.TempDir()
+	for i := 0; i < 600; i++ {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, fmt.Sprint(i)), []byte("x"), 0o600))
+	}
+	files, err := archiveFilesBounded(context.Background(), dir, 10, 64)
+	require.ErrorContains(t, err, "inventory limit")
+	require.Len(t, files, 9)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	files, err = archiveFiles(ctx, dir)
+	require.ErrorIs(t, err, context.Canceled)
+	require.Empty(t, files)
+	deep := filepath.Join(t.TempDir(), "a", "b", "c")
+	require.NoError(t, os.MkdirAll(deep, 0o700))
+	_, err = archiveFilesBounded(context.Background(), filepath.Dir(filepath.Dir(deep)), 100, 1)
+	require.ErrorContains(t, err, "depth limit")
+}

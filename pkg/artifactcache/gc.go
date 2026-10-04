@@ -107,6 +107,9 @@ func (h *Handler) collect(ctx context.Context, db *bolthold.Store, report *Reten
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if err := h.recoverDeletions(ctx, db, report); err != nil {
+		return err
+	}
 	if err := h.expireAges(ctx, db, report); err != nil {
 		return err
 	}

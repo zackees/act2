@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -125,7 +125,15 @@ func openAuditDB(dir string) (*bolthold.Store, error) {
 }
 
 func auditLocked(ctx context.Context, h *Handler, db *bolthold.Store, cursor uint64) StoreAudit {
+	return auditInventory(ctx, h, db, cursor, false)
+}
+
+func auditInventory(ctx context.Context, h *Handler, db *bolthold.Store, cursor uint64, recoverable bool) StoreAudit {
 	report := newStoreAudit(h.dir)
+	if err := validateDeletionIntents(ctx, db, recoverable); err != nil {
+		report.fail(err.Error())
+		return report
+	}
 	files, err := archiveFiles(ctx, h.storage.rootDir)
 	if err != nil {
 		report.fail("archive inventory: " + err.Error())
@@ -160,16 +168,7 @@ func auditLocked(ctx context.Context, h *Handler, db *bolthold.Store, cursor uin
 		}
 		hash.Write(encoded)
 		entry := StoreEntry{Cache: *cache}
-		if cache.Complete {
-			name := h.storage.filename(cache.ID)
-			size, ok := files[name]
-			if !ok {
-				report.fail(fmt.Sprintf("cache %d archive is missing", cache.ID))
-			} else {
-				entry.Bytes = &size
-				delete(files, name)
-			}
-		}
+		entry.Bytes = auditArchiveBytes(h, db, cache, files, recoverable, &report)
 		encoded, err = json.Marshal(entry.Bytes)
 		if err != nil {
 			return err
@@ -216,34 +215,83 @@ func auditLocked(ctx context.Context, h *Handler, db *bolthold.Store, cursor uin
 	return report
 }
 
+func auditArchiveBytes(h *Handler, db *bolthold.Store, cache *Cache, files map[string]int64, recoverable bool, report *StoreAudit) *int64 {
+	if !cache.Complete {
+		return nil
+	}
+	name := h.storage.filename(cache.ID)
+	size, ok := files[name]
+	if ok {
+		delete(files, name)
+		return &size
+	}
+	if !recoverable || !deletionMatches(db, cache) {
+		report.fail(fmt.Sprintf("cache %d archive is missing", cache.ID))
+	}
+	return nil
+}
+
 func archiveFiles(ctx context.Context, root string) (map[string]int64, error) {
+	return archiveFilesBounded(ctx, root, auditMaxFiles, 64)
+}
+
+func archiveFilesBounded(ctx context.Context, root string, limit, maxDepth int) (map[string]int64, error) {
 	files := make(map[string]int64)
-	var count int
-	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		count++
-		if count > auditMaxFiles {
-			return fmt.Errorf("archive inventory limit exceeded")
-		}
-		if entry.IsDir() {
-			return nil
-		}
-		info, err := entry.Info()
-		if err != nil {
-			return err
-		}
+	count := 0
+	err := inventoryPath(ctx, root, 0, maxDepth, limit, &count, files)
+	return files, err
+}
+
+// ReadDir with a positive page size avoids materializing an entire directory
+// before enforcing the shared entry limit. Depth also bounds open descriptors.
+func inventoryPath(ctx context.Context, path string, depth, maxDepth, limit int, count *int, files map[string]int64) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	*count++
+	if *count > limit {
+		return fmt.Errorf("archive inventory limit exceeded")
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
 		if !info.Mode().IsRegular() {
 			return fmt.Errorf("nonregular archive file")
 		}
 		files[path] = info.Size()
 		return nil
-	})
-	return files, err
+	}
+	if depth >= maxDepth {
+		return fmt.Errorf("archive inventory depth limit exceeded")
+	}
+	dir, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	return inventoryDirectory(ctx, dir, path, depth, maxDepth, limit, count, files)
+}
+
+func inventoryDirectory(ctx context.Context, dir *os.File, path string, depth, maxDepth, limit int, count *int, files map[string]int64) error {
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		entries, err := dir.ReadDir(256)
+		for _, entry := range entries {
+			if err := inventoryPath(ctx, filepath.Join(path, entry.Name()), depth+1, maxDepth, limit, count, files); err != nil {
+				return err
+			}
+		}
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+	}
 }
 
 func includeAuditEntry(page []StoreEntry, entry StoreEntry, cursor uint64) []StoreEntry {

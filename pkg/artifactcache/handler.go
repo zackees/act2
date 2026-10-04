@@ -243,7 +243,8 @@ func (h *Handler) find(w http.ResponseWriter, r *http.Request, _ httprouter.Para
 		h.responseJSON(w, r, 500, err)
 		return
 	} else if !ok {
-		_ = db.Delete(cache.ID, cache)
+		// Preserve metadata and any deletion intent for coordinated maintenance.
+		// A lookup miss must not hide damage or orphan interrupted cleanup.
 		h.responseJSON(w, r, 204)
 		return
 	}

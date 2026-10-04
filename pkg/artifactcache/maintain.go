@@ -52,7 +52,7 @@ func MaintainStore(ctx context.Context, dir string, policy Policy) StoreAudit {
 		return report
 	}
 	defer db.Close()
-	before := auditLocked(ctx, h, db, 0)
+	before := auditInventory(ctx, h, db, 0, true)
 	if before.Partial {
 		return before
 	}

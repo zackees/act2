@@ -70,6 +70,9 @@ starting a server or creating a missing store. Pages contain at most 12 entries.
 Compare fingerprints across pages: they cover metadata and file sizes, not
 archive contents. Missing, ready, busy and partial states are distinct; unknown
 sizes are null. Row/file counts, metadata size and operation time are bounded.
+Archive inventory reads 256 directory entries per page, with a shared 100,000-entry
+ceiling and a 64-directory depth ceiling; it checks cancellation between pages
+and entries without materializing an entire directory first.
 The audit holds an exclusive coordination lock using a read-only descriptor.
 Verified on a disposable Docker volume mounted read-only: an attempted write
 fails with EROFS, the audit reports both archives (160 bytes), and metadata stays
@@ -96,6 +99,16 @@ receipt. The byte pass reports remaining completed bytes, recently used protecte
 bytes and whether its ceiling was met; a partial/aborted pass leaves those fields
 unknown. These values exclude temporary data and filesystem allocation overhead.
 Tests cover both successful byte eviction and a protected over-budget namespace.
+
+Deletion first commits a typed intent containing the cache identity and reason.
+After file removal, one transaction deletes both metadata and intent. Interrupted
+removal can therefore be retried: audit reports partial while an intent remains,
+and maintenance accepts a missing archive only when its intent matches. Unknown
+missing archives still refuse collection. Cohort recovery waits until every
+namespace passes preflight. Recovery reports zero newly reclaimed bytes for an
+already absent archive and emits no duplicate receipt on the next pass. Tests
+cover interruption followed by lookup, unrecorded missing files, and a partial peer deferring cohort
+recovery. The full cache package passes race testing; Go lint reports zero issues.
 
 Aggregate machine budgeting, sustained warm-run benchmarks and Bosn integration
 remain open. The Bosn pin still selects released act2;
