@@ -104,7 +104,7 @@ func TestToolGenerationRetirementActualBindMount(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, before)
 	require.NoError(t, unix.Mount(source, target, "", unix.MS_BIND, ""))
-	defer unix.Unmount(target, 0)
+	defer func() { require.NoError(t, unix.Unmount(target, 0)) }()
 	var sourceStat, targetStat unix.Stat_t
 	require.NoError(t, unix.Stat(source, &sourceStat))
 	require.NoError(t, unix.Stat(target, &targetStat))
