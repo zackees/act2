@@ -112,7 +112,7 @@ func TestToolStoreDuOracleNormalizesDirectoryMetadata(t *testing.T) {
 	require.NoError(t, err)
 	supplement, err := independentDuDirectorySupplement(ctx, root)
 	require.NoError(t, err)
-	// The three-byte payload is hardlinked and counts once; symlink text is
+	// The three-byte payload is linked twice and counts once; symlink text is
 	// seven bytes. No auditor or internal traversal participates in this proof.
 	require.Equal(t, directoryBytes+3+7, apparent+supplement)
 }
