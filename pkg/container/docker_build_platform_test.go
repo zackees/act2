@@ -8,6 +8,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/moby/moby/api/types/system"
+
 	"github.com/moby/moby/client"
 	specs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/stretchr/testify/require"
@@ -23,12 +25,19 @@ func TestDockerBuildAfterForeignPlatform(t *testing.T) {
 	cli, err := GetDockerClient(ctx)
 	require.NoError(t, err)
 	defer cli.Close()
-	for _, platform := range []string{"linux/arm64", ""} {
+	info, err := cli.Info(ctx, client.InfoOptions{})
+	require.NoError(t, err)
+	native := nativeDockerBuildPlatform(info.Info).Architecture
+	foreign := "arm64"
+	if native == foreign {
+		foreign = "amd64"
+	}
+	for _, platform := range []string{"linux/" + foreign, ""} {
 		name := "act-build-platform-native"
-		expected := "amd64"
+		expected := native
 		if platform != "" {
 			name = "act-build-platform-arm"
-			expected = "arm64"
+			expected = foreign
 		}
 		var body bytes.Buffer
 		writer := tar.NewWriter(&body)
@@ -42,5 +51,20 @@ func TestDockerBuildAfterForeignPlatform(t *testing.T) {
 		image, err := cli.ImageInspect(ctx, name, client.ImageInspectWithPlatform(&specs.Platform{OS: "linux", Architecture: expected}))
 		require.NoError(t, err)
 		require.Equal(t, expected, image.Architecture, "builder must not silently reuse foreign-platform image")
+	}
+}
+
+func TestNativeDockerBuildPlatformAliases(t *testing.T) {
+	for _, test := range []struct{ reported, architecture, variant string }{
+		{"x86_64", "amd64", ""}, {"amd64", "amd64", ""},
+		{"aarch64", "arm64", ""}, {"arm64", "arm64", ""},
+		{"i386", "386", ""}, {"i686", "386", ""},
+		{"armv6l", "arm", "v6"}, {"armv7l", "arm", "v7"},
+		{"ppc64le", "ppc64le", ""}, {"s390x", "s390x", ""},
+	} {
+		t.Run(test.reported, func(t *testing.T) {
+			got := nativeDockerBuildPlatform(system.Info{OSType: "linux", Architecture: test.reported})
+			require.Equal(t, specs.Platform{OS: "linux", Architecture: test.architecture, Variant: test.variant}, got)
+		})
 	}
 }
