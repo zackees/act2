@@ -137,6 +137,7 @@ func TestActualCopyDirTrustedReceiverPreservesUnchangedSourceAndOutputs(t *testi
 	// destination config must omit even valid source-side extension settings.
 	require.NoError(t, os.WriteFile(filepath.Join(source, ".git", "config"), []byte("[core]\n\trepositoryformatversion = 0\n\tbare = false\n\tfilemode = true\n\thooksPath = /untrusted-hooks\n[filter \"untrusted\"]\n\tclean = forbidden-command\n"), 0600))
 	require.NoError(t, os.MkdirAll(filepath.Join(source, ".git", "hooks"), 0700))
+	// #nosec G306 -- intentionally executable hostile Git hook in isolated test fixture; restoration must exclude it.
 	require.NoError(t, os.WriteFile(filepath.Join(source, ".git", "hooks", "post-checkout"), []byte("#!/bin/sh\nexit 99\n"), 0700))
 	grant := sourcecheckout.BaselineGrant{Source: original, GitRoot: source, MaterializedRoot: destination, CacheNamespace: "test-source-v1", OutputIdentity: outputs, PayloadSHA256: strings.Repeat("b", 64), PolicyCommit: original.CheckoutCommit, WorkflowCommit: original.CheckoutCommit, RunID: 1, Attempt: 1, JobID: 1}
 	receipt := sourcecheckout.SourceReceipt{Identity: requested, GitRoot: source, MaterializedRoot: source, CacheNamespace: grant.CacheNamespace, OutputIdentity: outputs}
