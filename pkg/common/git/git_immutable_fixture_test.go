@@ -2,6 +2,7 @@ package git
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -150,15 +151,24 @@ func newImmutableHTTP(t *testing.T, fixture immutableFixture) *immutableHTTP {
 // configuration, alternate object store, hooks or HTTP credential environment.
 func serveImmutableUploadPack(t *testing.T, dir string, w http.ResponseWriter, r *http.Request) {
 	t.Helper()
+	// Request values never become command arguments; only cancellation crosses
+	// into the independently constructed child context. Run always joins it.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stop := context.AfterFunc(r.Context(), cancel)
+	defer stop()
+	if r.Context().Err() != nil {
+		cancel()
+	}
 	var command *exec.Cmd
 	switch {
 	case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/info/refs") && r.URL.Query().Get("service") == "git-upload-pack":
 		w.Header().Set("Content-Type", "application/x-git-upload-pack-advertisement")
 		_, _ = fmt.Fprint(w, "001e# service=git-upload-pack\n0000")
-		command = exec.CommandContext(r.Context(), "git", "upload-pack", "--stateless-rpc", "--advertise-refs", ".")
+		command = exec.CommandContext(ctx, "git", "upload-pack", "--stateless-rpc", "--advertise-refs", ".")
 	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/git-upload-pack"):
 		w.Header().Set("Content-Type", "application/x-git-upload-pack-result")
-		command = exec.CommandContext(r.Context(), "git", "upload-pack", "--stateless-rpc", ".")
+		command = exec.CommandContext(ctx, "git", "upload-pack", "--stateless-rpc", ".")
 	default:
 		http.Error(w, "unsupported fixture Git request", http.StatusNotFound)
 		return
