@@ -65,3 +65,15 @@ func TestGCProtectsTransferFromAnotherServer(t *testing.T) {
 	_, err = os.Stat(archive)
 	require.NoError(t, err, "another server must not unlink an archive during a transfer")
 }
+
+func TestTransferLockCannotCreateAnAbsentNamespace(t *testing.T) {
+	dir := t.TempDir()
+	h := &Handler{dir: dir}
+	lock, err := h.transferLock(false)
+	if lock != nil {
+		lock.Close()
+	}
+	require.ErrorIs(t, err, os.ErrNotExist)
+	_, err = os.Stat(filepath.Join(dir, "transfers.bolt"))
+	require.ErrorIs(t, err, os.ErrNotExist, "inspection must never create a cache namespace or coordination file")
+}

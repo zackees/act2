@@ -137,6 +137,7 @@ func createRootCommand(ctx context.Context, input *Input, version string) *cobra
 	rootCmd.PersistentFlags().BoolVar(&input.listOptions, "list-options", false, "Print a json structure of compatible options")
 	rootCmd.PersistentFlags().IntVar(&input.concurrentJobs, "concurrent-jobs", 0, "Maximum number of concurrent jobs to run. Default is the number of CPUs available.")
 	rootCmd.SetArgs(args())
+	rootCmd.AddCommand(newCacheCommand(ctx, input))
 	return rootCmd
 }
 
@@ -689,6 +690,8 @@ func newRunCommand(ctx context.Context, input *Input) func(*cobra.Command, []str
 		var cacheHandler *artifactcache.Handler
 		if !input.noCacheServer && envs[cacheURLKey] == "" {
 			var err error
+			// Cache maintenance has its own bounded context and outlives individual requests.
+			//nolint:contextcheck // Server-owned retention is independent of the workflow context.
 			cacheHandler, err = artifactcache.StartHandlerWithPolicy(input.cacheServerPath, input.cacheServerExternalURL, input.cacheServerAddr, input.cacheServerPort, common.Logger(ctx), input.cachePolicy)
 			if err != nil {
 				return err

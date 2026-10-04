@@ -82,6 +82,10 @@ func TestDeletionFailureKeepsMetadataForRetry(t *testing.T) {
 	// A nonempty directory cannot be removed as an archive, even as root.
 	require.NoError(t, os.MkdirAll(archive, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(archive, "unexpected"), []byte("data"), 0o600))
-	require.Error(t, h.deleteCache(db, cache))
+	report := &RetentionReport{}
+	require.Error(t, h.deleteCache(db, cache, EvictionBudget, report))
+	require.Zero(t, report.DeletedCount)
+	require.Zero(t, report.ReclaimedArchiveBytes)
+	require.Empty(t, report.Receipts)
 	require.NoError(t, db.Get(cache.ID, &Cache{}), "failed filesystem deletion must not erase its accounting record")
 }

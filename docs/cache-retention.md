@@ -63,8 +63,40 @@ All servers sharing a namespace must use this protocol. Legacy act2 servers
 do not participate. Do not enable quota against mixed-version live stores
 without a verified exclusion mechanism.
 
-Periodic server maintenance does not cover namespaces with no running server.
-Offline audit/maintenance, aggregate machine budgeting, unknown-file
-accounting, bounded repository audit/export, sustained warm-run benchmarks,
-and Bosn integration remain open. The Bosn pin still selects released act2;
+## Offline namespace operations (local candidate)
+
+`cache audit --cache-server-path PATH --cursor ID` exports typed JSON without
+starting a server or creating a missing store. Pages contain at most 12 entries.
+Compare fingerprints across pages: they cover metadata and file sizes, not
+archive contents. Missing, ready, busy and partial states are distinct; unknown
+sizes are null. Row/file counts, metadata size and operation time are bounded.
+The audit holds an exclusive coordination lock using a read-only descriptor.
+Verified on a disposable Docker volume mounted read-only: an attempted write
+fails with EROFS, the audit reports both archives (160 bytes), and metadata stays
+byte-identical.
+
+`cache prune --cache-server-path PATH` only inspects the store. `--apply` applies
+the configured age/byte policy under the same lock, even when no server runs.
+Partial inventories, including untracked files, refuse collection. These commands
+require the new coordination file; legacy or mixed-version stores are unsafe for
+automatic eviction. Audit archive bytes include regular temporary/untracked files
+but exclude metadata, directory overhead and allocated-block differences.
+
+RED: a closed server left 160 archive bytes under a 100-byte policy. GREEN:
+offline maintenance leaves the newest 80-byte archive. Audit pagination tests
+verify unchanged metadata, consistent pages and missing/busy/corrupt states.
+The updated artifactcache suite passes the race detector; focused offline CLI
+and policy tests pass. The updated packages pass pinned golangci-lint v2.11.4 (zero issues).
+The full CLI Docker suite result above predates this slice.
+
+Applied maintenance reports successful deletion counts, completed-archive bytes
+reclaimed, and up to 32 receipts with exact entry IDs and typed reasons. Omitted
+receipt count is explicit. Failed file or metadata removal emits no successful
+receipt. The byte pass reports remaining completed bytes, recently used protected
+bytes and whether its ceiling was met; a partial/aborted pass leaves those fields
+unknown. These values exclude temporary data and filesystem allocation overhead.
+Tests cover both successful byte eviction and a protected over-budget namespace.
+
+Aggregate machine budgeting, sustained warm-run benchmarks and Bosn integration
+remain open. The Bosn pin still selects released act2;
 this branch authorizes no host-cache deletion.
