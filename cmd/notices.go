@@ -21,7 +21,7 @@ type Notice struct {
 
 func displayNotices(input *Input) {
 	// Avoid causing trouble parsing the json
-	if input.listOptions {
+	if input.listOptions || input.ciCapabilities {
 		return
 	}
 	select {

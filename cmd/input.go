@@ -66,6 +66,7 @@ type Input struct {
 	useNewActionCache                  bool
 	localRepository                    []string
 	listOptions                        bool
+	ciCapabilities                     bool
 	validate                           bool
 	strict                             bool
 	concurrentJobs                     int

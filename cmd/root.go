@@ -70,6 +70,7 @@ func createRootCommand(ctx context.Context, input *Input, version string) *cobra
 	rootCmd.Flags().BoolVar(&input.strict, "strict", false, "use strict workflow schema")
 	rootCmd.Flags().BoolP("list", "l", false, "list workflows")
 	rootCmd.Flags().BoolP("graph", "g", false, "draw workflows")
+	rootCmd.Flags().BoolVar(&input.ciCapabilities, "ci-capabilities", false, "Print CI receipt capabilities as JSON without running workflows")
 	rootCmd.Flags().StringP("job", "j", "", "run a specific job ID")
 	rootCmd.Flags().BoolP("bug-report", "", false, "Display system information for bug report")
 	rootCmd.Flags().BoolP("man-page", "", false, "Print a generated manual page to stdout")
@@ -310,8 +311,11 @@ func readArgsFile(file string, split bool) []string {
 	return args
 }
 
-func setup(_ *Input) func(*cobra.Command, []string) {
+func setup(input *Input) func(*cobra.Command, []string) {
 	return func(cmd *cobra.Command, _ []string) {
+		if input.ciCapabilities {
+			return
+		}
 		verbose, _ := cmd.Flags().GetBool("verbose")
 		if verbose {
 			log.SetLevel(log.DebugLevel)
@@ -399,6 +403,9 @@ func parseMatrix(matrix []string) map[string]map[string]bool {
 //nolint:gocyclo
 func newRunCommand(ctx context.Context, input *Input) func(*cobra.Command, []string) error {
 	return func(cmd *cobra.Command, args []string) error {
+		if input.ciCapabilities {
+			return writeCICapabilities(cmd.OutOrStdout(), cmd.Version)
+		}
 		if input.jsonLogger {
 			log.SetFormatter(&log.JSONFormatter{})
 		}
