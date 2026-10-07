@@ -126,6 +126,7 @@ func StartHandlerWithPolicy(dir, customExternalURL string, outboundIP string, po
 	router := httprouter.New()
 	base := "/" + h.token + apiPath
 	router.GET(base+"/cache", h.middleware(h.find))
+	router.DELETE(base+"/cache", h.exactDelete)
 	router.POST(base+"/caches", h.middleware(h.reserve))
 	router.PATCH(base+"/caches/:id", h.middleware(h.upload))
 	router.POST(base+"/caches/:id", h.middleware(h.commit))
