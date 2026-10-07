@@ -844,7 +844,7 @@ func (rc *RunContext) isEnabled(ctx context.Context) (bool, error) {
 
 	if !runJob {
 		rc.result("skipped")
-		l.WithField("jobResult", "skipped").Debugf("Skipping job '%s' due to '%s'", job.Name, job.If.Value)
+		l.WithField("jobResult", "skipped").Infof("Skipping job '%s' due to '%s'", job.Name, job.If.Value)
 		return false, nil
 	}
 
