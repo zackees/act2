@@ -11,6 +11,7 @@ import (
 
 	docker_container "github.com/moby/moby/api/types/container"
 	"github.com/nektos/act/pkg/common"
+	"github.com/nektos/act/pkg/container"
 	"github.com/nektos/act/pkg/model"
 	log "github.com/sirupsen/logrus"
 )
@@ -22,6 +23,10 @@ type Runner interface {
 
 // Config contains the config for a new runner
 type Config struct {
+	// SourceReceiver is injected by an authenticated controller embedding the
+	// runner. It has no workflow, CLI or serialized configuration decoder.
+	SourceReceiver container.SourceCheckoutReceiver `json:"-" yaml:"-"`
+
 	Actor                              string                       // the user that triggered the event
 	Workdir                            string                       // path to working directory
 	ActionCacheDir                     string                       // path used for caching action contents
@@ -260,7 +265,13 @@ func runPlannedJob(ctx context.Context, rc *RunContext, matrix map[string]interf
 	if err != nil {
 		return err
 	}
-	err = executor(common.WithJobErrorContainer(WithJobLogger(ctx, rc.Run.JobID, jobName, rc.Config, &rc.Masks, matrix)))
+	jobCtx := WithJobLogger(ctx, rc.Run.JobID, jobName, rc.Config, &rc.Masks, matrix)
+	if identity := rc.jobIdentity(); len(identity) > 0 {
+		jobCtx = common.WithLogger(jobCtx, common.Logger(jobCtx).WithFields(log.Fields{
+			"jobPath": identityPath(identity), "jobIdentity": identity,
+		}))
+	}
+	err = executor(common.WithJobErrorContainer(jobCtx))
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}

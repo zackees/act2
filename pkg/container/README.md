@@ -1,0 +1,9 @@
+# Docker build platform recovery
+
+Classic Docker engines can return a cached base image for the wrong architecture despite a requested platform. A build keeps its ordinary cache and pull policy first. The output is checked against the effective final-stage platform, including explicit FROM platform overrides, global ARG defaults and named-stage inheritance. Only a proven mismatch permits one retry with parent pulling, on the same classic backend and with identical context bytes. The retry output must match. Correct local/offline builds do not trigger parent pulling.
+
+Recovery stages one private context file, removed on return. The resource policy bounds raw and expanded context inspection to 8 GiB, the Dockerfile to 4 MiB, tar metadata bodies to 1 MiB, total metadata to 8 MiB and headers to one million. These are local replay/inspection resource limits, not GitHub artifact limits. Source files and their metadata are untouched. Unsupported or unresolved Dockerfile syntax cannot authorize a guessed-platform network retry; Docker still receives the original context and owns its syntax diagnostics.
+
+The Dockerfile parser dependency does not change the build backend. NewDockerBuildExecutorInput does not currently expose build arguments or a selected intermediate target; the resolver follows the last stage and Dockerfile ARG defaults. Any future addition of those inputs must pass them to both Docker and the resolver.
+
+Custom blocking build-context readers must implement Close that unblocks Read; cancellation closes that reader and removes the private replay file before returning. Finite bytes.Buffer, bytes.Reader and strings.Reader inputs retain ordinary behavior and ownership on success. Other non-interruptible custom readers are rejected before staging. Sparse archive encodings and nonzero sizes on bodyless tar entries cannot pass inspection framing.

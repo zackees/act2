@@ -9,7 +9,6 @@ import (
 	"path"
 	"regexp"
 	"strings"
-	"sync"
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/config"
@@ -28,11 +27,41 @@ var (
 	githubHTTPRegex     = regexp.MustCompile(`^https?://.*github.com.*/(.+)/(.+?)(?:.git)?$`)
 	githubSSHRegex      = regexp.MustCompile(`github.com[:/](.+)/(.+?)(?:.git)?$`)
 
-	cloneLock sync.Mutex
+	cloneLock = contextCloneLock{gate: make(chan struct{}, 1)}
 
 	ErrShortRef = errors.New("short SHA references are not supported")
 	ErrNoRepo   = errors.New("unable to find git repo")
 )
+
+// Keep clone/cache mutation globally serialized, without making canceled
+// executors wait behind an unrelated clone or refresh.
+type contextCloneLock struct {
+	gate chan struct{}
+}
+
+func (lock contextCloneLock) Lock() {
+	lock.gate <- struct{}{}
+}
+
+func (lock contextCloneLock) Unlock() {
+	<-lock.gate
+}
+
+func (lock contextCloneLock) lockContext(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	select {
+	case lock.gate <- struct{}{}:
+		if err := ctx.Err(); err != nil {
+			lock.Unlock()
+			return err
+		}
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
 
 type Error struct {
 	err    error
@@ -303,8 +332,13 @@ func NewGitCloneExecutor(input NewGitCloneExecutorInput) common.Executor {
 		logger.Infof("  \u2601  git clone '%s' # ref=%s", input.URL, input.Ref)
 		logger.Debugf("  cloning %s to %s", input.URL, input.Dir)
 
-		cloneLock.Lock()
+		if err := cloneLock.lockContext(ctx); err != nil {
+			return err
+		}
 		defer cloneLock.Unlock()
+		if isImmutableGitPin(input.Ref) {
+			return acquireImmutableGitPin(ctx, input)
+		}
 
 		refName := plumbing.ReferenceName(fmt.Sprintf("refs/heads/%s", input.Ref))
 		r, err := CloneIfRequired(ctx, refName, input, logger)
@@ -318,7 +352,7 @@ func NewGitCloneExecutor(input NewGitCloneExecutorInput) common.Executor {
 		fetchOptions, pullOptions := gitOptions(input.Token)
 
 		if !isOfflineMode {
-			err = r.Fetch(&fetchOptions)
+			err = r.FetchContext(ctx, &fetchOptions)
 			if err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
 				return err
 			}
@@ -382,7 +416,13 @@ func NewGitCloneExecutor(input NewGitCloneExecutorInput) common.Executor {
 			}
 		}
 		if !isOfflineMode {
-			if err = w.Pull(&pullOptions); err != nil && err != git.NoErrAlreadyUpToDate {
+			if err = w.PullContext(ctx, &pullOptions); err != nil && err != git.NoErrAlreadyUpToDate {
+				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+					return err
+				}
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
 				logger.Debugf("Unable to pull %s: %v", refName, err)
 			}
 		}

@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/moby/go-archive"
+	"github.com/moby/moby/api/types/system"
 	"github.com/moby/moby/client"
 	specs "github.com/opencontainers/image-spec/specs-go/v1"
 
@@ -47,7 +48,13 @@ func NewDockerBuildExecutor(input NewDockerBuildExecutorInput) common.Executor {
 			AuthConfigs: LoadDockerAuthConfigs(ctx),
 			Dockerfile:  input.Dockerfile,
 		}
-		if input.Platform != "" {
+		if input.Platform == "" {
+			info, err := cli.Info(ctx, client.InfoOptions{})
+			if err != nil {
+				return err
+			}
+			options.Platforms = []specs.Platform{nativeDockerBuildPlatform(info.Info)}
+		} else {
 			parts := strings.SplitN(input.Platform, "/", 2)
 			if len(parts) == 2 {
 				options.Platforms = []specs.Platform{{OS: parts[0], Architecture: parts[1]}}
@@ -55,7 +62,7 @@ func NewDockerBuildExecutor(input NewDockerBuildExecutorInput) common.Executor {
 		}
 		var buildContext io.ReadCloser
 		if input.BuildContext != nil {
-			buildContext = io.NopCloser(input.BuildContext)
+			buildContext, err = interruptibleBuildInput(input.BuildContext)
 		} else {
 			buildContext, err = createBuildContext(ctx, input.ContextDir, input.Dockerfile)
 		}
@@ -66,13 +73,7 @@ func NewDockerBuildExecutor(input NewDockerBuildExecutorInput) common.Executor {
 		defer buildContext.Close()
 
 		logger.Debugf("Creating image from context dir '%s' with tag '%s' and platform '%s'", input.ContextDir, input.ImageTag, input.Platform)
-		resp, err := cli.ImageBuild(ctx, buildContext, options)
-
-		err = logDockerResponse(logger, resp.Body, err != nil)
-		if err != nil {
-			return err
-		}
-		return nil
+		return buildWithPlatformRecovery(ctx, cli, buildContext, options, input.ImageTag)
 	}
 }
 func createBuildContext(ctx context.Context, contextDir string, relDockerfile string) (io.ReadCloser, error) {
@@ -120,4 +121,24 @@ func createBuildContext(ctx context.Context, contextDir string, relDockerfile st
 	}
 
 	return buildCtx, nil
+}
+
+// Docker reports kernel architecture aliases; build requests use OCI names.
+func nativeDockerBuildPlatform(info system.Info) specs.Platform {
+	platform := specs.Platform{OS: info.OSType, Architecture: info.Architecture}
+	switch info.Architecture {
+	case "x86_64":
+		platform.Architecture = "amd64"
+	case "aarch64":
+		platform.Architecture = "arm64"
+	case "i386", "i686":
+		platform.Architecture = "386"
+	case "armv6l":
+		platform.Architecture = "arm"
+		platform.Variant = "v6"
+	case "armv7l":
+		platform.Architecture = "arm"
+		platform.Variant = "v7"
+	}
+	return platform
 }

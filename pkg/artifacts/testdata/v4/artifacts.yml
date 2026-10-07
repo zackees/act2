@@ -85,3 +85,32 @@ jobs:
         [[ "$(cat context.txt)" = "$(cat out4/context.txt)" ]] || exit 1
         [[ "$(cat data.txt)" = "$(cat out4/data.txt)" ]] || exit 1
       shell: bash
+
+  multipart-upload:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          dd if=/dev/urandom of=payload.bin bs=1M count=24
+          sha256sum payload.bin > payload.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: multipart-bundle
+          path: |
+            payload.bin
+            payload.sha256
+          compression-level: 0
+  multipart-download:
+    needs: multipart-upload
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        reader: [1, 2, 3]
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: multipart-bundle
+          path: downloaded
+      - run: |
+          test "$(id -u)" -ne 0
+          cd downloaded
+          sha256sum --check payload.sha256

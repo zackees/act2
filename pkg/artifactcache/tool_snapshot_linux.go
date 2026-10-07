@@ -175,6 +175,12 @@ func toolSourceCompletion(source string) (string, error) {
 }
 
 func prepareToolSnapshotStore(root string) (transferLease, error) {
+	return prepareToolSnapshotStoreWithLease(root, func(path string) (transferLease, error) {
+		return openTransferLease(path, false, 100*time.Millisecond)
+	})
+}
+
+func prepareToolSnapshotStoreWithLease(root string, openCatalog func(string) (transferLease, error)) (transferLease, error) {
 	if err := os.Mkdir(root, 0755); err != nil && !os.IsExist(err) {
 		return nil, err
 	}
@@ -204,7 +210,7 @@ func prepareToolSnapshotStore(root string) (transferLease, error) {
 			return nil, err
 		}
 	}
-	lease, err := openTransferLease(lockPath, false, 100*time.Millisecond)
+	lease, err := openCatalog(lockPath)
 	if err != nil {
 		return nil, err
 	}

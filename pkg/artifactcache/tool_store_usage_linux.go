@@ -75,10 +75,10 @@ func auditToolStoreUsageLocked(ctx context.Context, root string, maxEntries int)
 		}
 		seen[key] = struct{}{}
 		report.UniqueInodes++
-		// st_size is meaningful for regular files and symlinks. Directory and
-		// special-inode st_size values are not GNU du-compatible apparent bytes;
-		// their allocated blocks still contribute to physical inode accounting.
-		if info.Mode().IsRegular() || info.Mode()&fs.ModeSymlink != 0 {
+		// The apparent-byte contract includes directory metadata on every
+		// runner, independently of du's version. Special inodes have no apparent
+		// payload; their allocated blocks still contribute to physical accounting.
+		if info.Mode().IsRegular() || info.IsDir() || info.Mode()&fs.ModeSymlink != 0 {
 			if err := addToolUsageBytes(&apparent, info.Size()); err != nil {
 				return err
 			}

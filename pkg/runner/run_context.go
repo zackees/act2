@@ -168,15 +168,10 @@ func (rc *RunContext) getBindsAndMounts(convert func(string) string) ([]string, 
 
 	ext := container.LinuxContainerEnvironmentExtensions{}
 
-	if hostEnv, ok := rc.JobContainer.(*container.HostEnvironment); ok {
-		mounts := map[string]string{}
-		// Permission issues?
-		// binds = append(binds, hostEnv.ToolCache+":/opt/hostedtoolcache")
-		binds = append(binds, hostEnv.GetActPath()+":"+ext.GetActPath())
-		// Native execution copies the checkout into its host executor path.
-		// Docker actions still expect the original Linux container destination.
-		binds = append(binds, hostEnv.ToContainerPath(rc.Config.Workdir)+":"+ext.ToContainerPath(rc.Config.Workdir))
-		return binds, mounts
+	if _, ok := rc.JobContainer.(*container.HostEnvironment); ok {
+		// The daemon may not share the executor's filesystem. Docker actions copy
+		// their workspace and command files through the Docker archive API.
+		return binds, map[string]string{}
 	}
 	mounts := map[string]string{
 		"act-toolcache": "/opt/hostedtoolcache",
@@ -235,11 +230,13 @@ func (rc *RunContext) startHostEnvironment() common.Executor {
 		}
 		toolCache := filepath.Join(cacheDir, "tool_cache")
 		rc.JobContainer = &container.HostEnvironment{
-			Path:      path,
-			TmpDir:    runnerTmp,
-			ToolCache: toolCache,
-			Workdir:   rc.Config.Workdir,
-			ActPath:   actPath,
+			Path:           path,
+			TmpDir:         runnerTmp,
+			ToolCache:      toolCache,
+			Workdir:        rc.Config.Workdir,
+			ActPath:        actPath,
+			OwnedRoot:      miscpath,
+			SourceReceiver: rc.Config.SourceReceiver,
 			CleanUp: func() {
 				os.RemoveAll(miscpath)
 			},
