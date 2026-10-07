@@ -23,6 +23,7 @@ const (
 	EvictionSuperseded EvictionReason = "superseded"
 	EvictionBudget     EvictionReason = "byte_budget"
 	EvictionAggregate  EvictionReason = "aggregate_budget"
+	EvictionExplicit   EvictionReason = "explicit_key"
 )
 
 type EvictionReceipt struct {

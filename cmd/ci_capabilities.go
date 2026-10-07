@@ -19,6 +19,6 @@ func writeCICapabilities(output io.Writer, version string) error {
 		SchemaVersion: 1,
 		Producer:      "act2",
 		Version:       version,
-		Capabilities:  []string{"qualified-job-identity-v1", "step-stage-result-v1", "selected-job-outputs-v1"},
+		Capabilities:  []string{"qualified-job-identity-v1", "step-stage-result-v1", "selected-job-outputs-v1", "cache-exact-delete-v1"},
 	})
 }

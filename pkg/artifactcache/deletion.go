@@ -38,7 +38,7 @@ func validateDeletionIntents(ctx context.Context, db *bolthold.Store, recoverabl
 			return fmt.Errorf("deletion intent limit exceeded")
 		}
 		switch intent.Reason {
-		case EvictionIncomplete, EvictionUnused, EvictionMaxAge, EvictionSuperseded, EvictionBudget, EvictionAggregate:
+		case EvictionIncomplete, EvictionUnused, EvictionMaxAge, EvictionSuperseded, EvictionBudget, EvictionAggregate, EvictionExplicit:
 		default:
 			return fmt.Errorf("invalid deletion intent reason")
 		}

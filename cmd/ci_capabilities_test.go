@@ -32,7 +32,7 @@ func TestCICapabilitiesWithoutExecution(t *testing.T) {
 	assert.Equal(t, "act2", report.Producer)
 	assert.Equal(t, "0.2.89-act2.test", report.Version)
 	assert.Equal(t, []string{"precheck/precheck:plan"}, input.ciOutputs)
-	assert.ElementsMatch(t, []string{"qualified-job-identity-v1", "step-stage-result-v1", "selected-job-outputs-v1"}, report.Capabilities)
+	assert.ElementsMatch(t, []string{"qualified-job-identity-v1", "step-stage-result-v1", "selected-job-outputs-v1", "cache-exact-delete-v1"}, report.Capabilities)
 }
 
 type rejectedCapabilityWriter struct{}

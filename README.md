@@ -39,3 +39,26 @@ Want to contribute to act? Awesome! Check out the [contributing guidelines](CONT
 - Clone this repo `git clone git@github.com:nektos/act.git`
 - Run unit tests with `make test`
 - Build and install: `make install`
+
+## Fork CI cache cleanup contract
+
+This fork advertises `cache-exact-delete-v1` through
+`act --ci-capabilities --json`. The local cache service accepts
+`DELETE <ACTIONS_CACHE_URL>/_apis/artifactcache/cache?key=<exact-key>`.
+The URL's per-server token grants access to that server's namespace;
+no GitHub credentials are used. Keys match case insensitively, as they
+do for restore, and never match prefixes. Completed versions of the key
+are deleted; other keys and in-flight reservations remain.
+
+The response contains `schema_version: 1`, the requested `key`,
+`deleted_count` and `reclaimed_archive_bytes`. An absent key returns zero
+for both counters. Cleanup takes the existing exclusive transfer lock;
+active transfers return 503 and remain intact. Deletion uses the existing
+durable intent journal, allowing maintenance to recover interrupted removal.
+
+The shared `ci-lint cache heal` client selects this API under `ACT=true`
+and keeps using GitHub's API on hosted runners. Older servers lack this
+API and must report unsupported cleanup rather than claim success.
+Source contract tests cover both sides; published Bosn provider adoption
+and the Template pilot are tracked in
+[ci.yml issue #362](https://github.com/zackees/ci.yml/issues/362).
