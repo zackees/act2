@@ -63,6 +63,16 @@ func (lock contextCloneLock) lockContext(ctx context.Context) error {
 	}
 }
 
+// WithGitCacheLock protects a checkout reader from concurrent clone/reset.
+// The callback must not clone or execute actions while holding this gate.
+func WithGitCacheLock(ctx context.Context, read common.Executor) error {
+	if err := cloneLock.lockContext(ctx); err != nil {
+		return err
+	}
+	defer cloneLock.Unlock()
+	return read(ctx)
+}
+
 type Error struct {
 	err    error
 	commit string

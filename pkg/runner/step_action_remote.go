@@ -136,9 +136,7 @@ func (sar *stepActionRemote) prepareActionExecutor() common.Executor {
 		return common.NewPipelineExecutor(
 			ntErr,
 			func(ctx context.Context) error {
-				actionModel, err := sar.readAction(ctx, sar.Step, actionDir, sar.remoteAction.Path, remoteReader(ctx), os.WriteFile)
-				sar.action = actionModel
-				return err
+				return sar.readLegacyAction(ctx, actionDir, remoteReader(ctx))
 			},
 		)(ctx)
 	}
