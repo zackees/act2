@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,6 +12,31 @@ import (
 	"github.com/nektos/act/pkg/model"
 	"github.com/stretchr/testify/assert"
 )
+
+type ciOutputTestEvent struct {
+	Schema   int                    `json:"ciOutputSchema"`
+	Outputs  map[string]string      `json:"jobOutputs"`
+	Error    string                 `json:"jobOutputsError"`
+	Identity []jobIdentityComponent `json:"jobIdentity"`
+}
+
+func ciOutputEvents(t *testing.T, data []byte) []ciOutputTestEvent {
+	t.Helper()
+	var events []ciOutputTestEvent
+	for _, line := range bytes.Split(data, []byte("\n")) {
+		if len(line) == 0 {
+			continue
+		}
+		var event ciOutputTestEvent
+		if !assert.NoError(t, json.Unmarshal(line, &event)) {
+			return nil
+		}
+		if event.Schema != 0 {
+			events = append(events, event)
+		}
+	}
+	return events
+}
 
 func TestCIOutputsAreQualifiedOptInAndBounded(t *testing.T) {
 	for _, test := range []struct {
@@ -68,6 +94,7 @@ func TestCIOutputsAreQualifiedOptInAndBounded(t *testing.T) {
 			}
 			_ = runPlannedJob(ctx, rc, nil, 0, func(current *RunContext) (common.Executor, error) {
 				return func(ctx context.Context) error {
+					common.Logger(ctx).Warn("unrelated workflow notice")
 					if err := current.interpolateOutputs()(ctx); err != nil {
 						return err
 					}
@@ -75,17 +102,13 @@ func TestCIOutputsAreQualifiedOptInAndBounded(t *testing.T) {
 					return nil
 				}, nil
 			})
+			events := ciOutputEvents(t, factory.buffer.Bytes())
 			if test.want == "" && test.name != "empty" && test.errorCode == "" {
-				assert.Empty(t, factory.buffer.String())
+				assert.Empty(t, events)
 				return
 			}
-			var event struct {
-				Schema   int                    `json:"ciOutputSchema"`
-				Outputs  map[string]string      `json:"jobOutputs"`
-				Error    string                 `json:"jobOutputsError"`
-				Identity []jobIdentityComponent `json:"jobIdentity"`
-			}
-			if assert.NoError(t, json.Unmarshal(factory.buffer.Bytes(), &event)) {
+			if assert.Len(t, events, 1) {
+				event := events[0]
 				assert.Equal(t, 1, event.Schema)
 				assert.Equal(t, rc.jobIdentity(), event.Identity)
 				assert.Equal(t, test.errorCode, event.Error)
@@ -125,6 +148,7 @@ func TestCIOutputsKeepEachMatrixLegsOriginalExpressions(t *testing.T) {
 		ctx := WithJobLoggerFactory(context.Background(), factory)
 		assert.NoError(t, runPlannedJob(ctx, rc, rc.Matrix, 0, func(current *RunContext) (common.Executor, error) {
 			return func(ctx context.Context) error {
+				common.Logger(ctx).Warn("unrelated workflow notice")
 				if err := current.interpolateOutputs()(ctx); err != nil {
 					return err
 				}
@@ -132,11 +156,11 @@ func TestCIOutputsKeepEachMatrixLegsOriginalExpressions(t *testing.T) {
 				return nil
 			}, nil
 		}))
-		var event struct {
-			Outputs  map[string]string      `json:"jobOutputs"`
-			Identity []jobIdentityComponent `json:"jobIdentity"`
+		events := ciOutputEvents(t, factory.buffer.Bytes())
+		if !assert.Len(t, events, 1) {
+			continue
 		}
-		assert.NoError(t, json.Unmarshal(factory.buffer.Bytes(), &event))
+		event := events[0]
 		assert.Equal(t, rc.Matrix["lane"], event.Outputs["matrix"])
 		assert.Equal(t, rc.jobIdentity(), event.Identity)
 	}
