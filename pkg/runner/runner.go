@@ -41,6 +41,7 @@ type Config struct {
 	ForceRebuild                       bool                         // force rebuilding local docker image action
 	LogOutput                          bool                         // log the output from docker run
 	JSONLogger                         bool                         // use json or text logger
+	CIOutputs                          []string                     // qualified job-path:output selectors for CI evidence
 	LogPrefixJobID                     bool                         // switches from the full job name to the job id
 	Env                                map[string]string            // env for containers
 	Inputs                             map[string]string            // manually passed action inputs
@@ -118,6 +119,9 @@ func (f *cleanupFailures) joined() error {
 
 // New Creates a new Runner
 func New(runnerConfig *Config) (Runner, error) {
+	if err := validateCIOutputSelectors(runnerConfig); err != nil {
+		return nil, err
+	}
 	runner := &runnerImpl{
 		config: runnerConfig,
 	}
@@ -338,6 +342,12 @@ func (runner *runnerImpl) newRunContext(ctx context.Context, run *model.Run, mat
 		StepResults: make(map[string]*model.StepResult),
 		Matrix:      matrix,
 		caller:      runner.caller,
+	}
+	if len(runner.config.CIOutputs) > 0 {
+		rc.ciOutputExpressions = make(map[string]string, len(run.Job().Outputs))
+		for name, expression := range run.Job().Outputs {
+			rc.ciOutputExpressions[name] = expression
+		}
 	}
 	rc.ExprEval = rc.NewExpressionEvaluator(ctx)
 	rc.Name = rc.ExprEval.Interpolate(ctx, run.String())

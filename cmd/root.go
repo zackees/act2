@@ -103,6 +103,7 @@ func createRootCommand(ctx context.Context, input *Input, version string) *cobra
 	rootCmd.PersistentFlags().StringVarP(&input.workdir, "directory", "C", ".", "working directory")
 	rootCmd.PersistentFlags().BoolP("verbose", "v", false, "verbose output")
 	rootCmd.PersistentFlags().BoolVar(&input.jsonLogger, "json", false, "Output logs in json format")
+	rootCmd.PersistentFlags().StringArrayVar(&input.ciOutputs, "ci-output", nil, "Publish one requested CI job output with --json (job-path:output, e.g. precheck/precheck:plan)")
 	rootCmd.PersistentFlags().BoolVar(&input.logPrefixJobID, "log-prefix-job-id", false, "Output the job id within non-json logs instead of the entire name")
 	rootCmd.PersistentFlags().BoolVarP(&input.noOutput, "quiet", "q", false, "disable logging of output from steps")
 	rootCmd.PersistentFlags().BoolVarP(&input.dryrun, "dryrun", "n", false, "disable container creation, validates only workflow correctness")
@@ -634,6 +635,7 @@ func newRunCommand(ctx context.Context, input *Input) func(*cobra.Command, []str
 			BindWorkdir:                        input.bindWorkdir,
 			LogOutput:                          !input.noOutput,
 			JSONLogger:                         input.jsonLogger,
+			CIOutputs:                          input.ciOutputs,
 			LogPrefixJobID:                     input.logPrefixJobID,
 			Env:                                envs,
 			Secrets:                            secrets,

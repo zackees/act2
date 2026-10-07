@@ -186,6 +186,7 @@ func setJobResult(ctx context.Context, info jobInfo, rc *RunContext, success boo
 }
 
 func setJobOutputs(ctx context.Context, rc *RunContext) {
+	publishCIOutputs(ctx, rc)
 	if rc.caller != nil {
 		// map outputs for reusable workflows
 		callerOutputs := make(map[string]string)
