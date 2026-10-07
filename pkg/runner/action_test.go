@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"io/fs"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -226,8 +227,12 @@ func TestActionRunner(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
 
+			checkout, input := legacyCheckoutFixture(t)
+			remote := tt.step.(*stepActionRemote)
+			remote.resolvedSha = checkout.resolvedSha
+			remote.RunContext.Config.ActionCacheDir = filepath.Dir(input.Dir)
 			cm := &containerMock{}
-			cm.On("CopyDir", "/var/run/act/actions/dir/", "dir/", false).Return(func(_ context.Context) error { return nil })
+			cm.On("CopyDir", "/var/run/act/actions/dir/", input.Dir+"/", false).Return(func(_ context.Context) error { return nil })
 
 			envMatcher := mock.MatchedBy(func(env map[string]string) bool {
 				for k, v := range tt.expectedEnv {
@@ -242,7 +247,7 @@ func TestActionRunner(t *testing.T) {
 
 			tt.step.getRunContext().JobContainer = cm
 
-			err := runActionImpl(tt.step, "dir", newRemoteAction("org/repo/path@ref"))(ctx)
+			err := runActionImpl(tt.step, input.Dir, newRemoteAction("org/repo/path@ref"))(ctx)
 
 			assert.Nil(t, err)
 			cm.AssertExpectations(t)

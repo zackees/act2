@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -127,8 +128,9 @@ func TestStepActionRemote(t *testing.T) {
 			clonedAction := false
 
 			origStepAtionRemoteNewCloneExecutor := stepActionRemoteNewCloneExecutor
-			stepActionRemoteNewCloneExecutor = func(_ git.NewGitCloneExecutorInput) common.Executor {
+			stepActionRemoteNewCloneExecutor = func(input git.NewGitCloneExecutorInput) common.Executor {
 				return func(_ context.Context) error {
+					initializeLegacyCheckout(t, input.Dir)
 					clonedAction = true
 					return nil
 				}
@@ -140,6 +142,7 @@ func TestStepActionRemote(t *testing.T) {
 			sar := &stepActionRemote{
 				RunContext: &RunContext{
 					Config: &Config{
+						ActionCacheDir: filepath.Join(t.TempDir(), "act"),
 						GitHubInstance: "github.com",
 					},
 					Run: &model.Run{
@@ -227,8 +230,9 @@ func TestStepActionRemotePre(t *testing.T) {
 			sarm := &stepActionRemoteMocks{}
 
 			origStepAtionRemoteNewCloneExecutor := stepActionRemoteNewCloneExecutor
-			stepActionRemoteNewCloneExecutor = func(_ git.NewGitCloneExecutorInput) common.Executor {
+			stepActionRemoteNewCloneExecutor = func(input git.NewGitCloneExecutorInput) common.Executor {
 				return func(_ context.Context) error {
+					initializeLegacyCheckout(t, input.Dir)
 					clonedAction = true
 					return nil
 				}
@@ -241,6 +245,7 @@ func TestStepActionRemotePre(t *testing.T) {
 				Step: tt.stepModel,
 				RunContext: &RunContext{
 					Config: &Config{
+						ActionCacheDir: filepath.Join(t.TempDir(), "act"),
 						GitHubInstance: "https://github.com",
 					},
 					Run: &model.Run{
@@ -296,6 +301,7 @@ func TestStepActionRemotePreThroughAction(t *testing.T) {
 			origStepAtionRemoteNewCloneExecutor := stepActionRemoteNewCloneExecutor
 			stepActionRemoteNewCloneExecutor = func(input git.NewGitCloneExecutorInput) common.Executor {
 				return func(_ context.Context) error {
+					initializeLegacyCheckout(t, input.Dir)
 					if input.URL == "https://github.com/org/repo" {
 						clonedAction = true
 					}
@@ -310,6 +316,7 @@ func TestStepActionRemotePreThroughAction(t *testing.T) {
 				Step: tt.stepModel,
 				RunContext: &RunContext{
 					Config: &Config{
+						ActionCacheDir:                t.TempDir(),
 						GitHubInstance:                "https://enterprise.github.com",
 						ReplaceGheActionWithGithubCom: []string{"org/repo"},
 					},
@@ -366,6 +373,7 @@ func TestStepActionRemotePreThroughActionToken(t *testing.T) {
 			origStepAtionRemoteNewCloneExecutor := stepActionRemoteNewCloneExecutor
 			stepActionRemoteNewCloneExecutor = func(input git.NewGitCloneExecutorInput) common.Executor {
 				return func(_ context.Context) error {
+					initializeLegacyCheckout(t, input.Dir)
 					if input.URL == "https://github.com/org/repo" && input.Token == "PRIVATE_ACTIONS_TOKEN_ON_GITHUB" {
 						clonedAction = true
 					}
@@ -380,6 +388,7 @@ func TestStepActionRemotePreThroughActionToken(t *testing.T) {
 				Step: tt.stepModel,
 				RunContext: &RunContext{
 					Config: &Config{
+						ActionCacheDir:                     t.TempDir(),
 						GitHubInstance:                     "https://enterprise.github.com",
 						ReplaceGheActionWithGithubCom:      []string{"org/repo"},
 						ReplaceGheActionTokenWithGithubCom: "PRIVATE_ACTIONS_TOKEN_ON_GITHUB",
@@ -561,6 +570,7 @@ func TestStepActionRemotePost(t *testing.T) {
 				env: map[string]string{},
 				RunContext: &RunContext{
 					Config: &Config{
+						ActionCacheDir: filepath.Join(t.TempDir(), "act"),
 						GitHubInstance: "https://github.com",
 					},
 					JobContainer: cm,

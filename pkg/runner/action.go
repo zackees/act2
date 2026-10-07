@@ -143,11 +143,12 @@ func maybeCopyToActionDir(ctx context.Context, step actionStep, actionDir string
 		return rc.JobContainer.CopyTarStream(ctx, containerActionDirCopy, ta)
 	}
 
-	if err := removeGitIgnore(ctx, actionDir); err != nil {
-		return err
-	}
-
-	return rc.JobContainer.CopyDir(containerActionDirCopy, actionDir+"/", rc.Config.UseGitIgnore)(ctx)
+	return withLegacyActionCheckout(ctx, step, actionDir, func(ctx context.Context) error {
+		if err := removeGitIgnore(ctx, actionDir); err != nil {
+			return err
+		}
+		return rc.JobContainer.CopyDir(containerActionDirCopy, actionDir+"/", rc.Config.UseGitIgnore)(ctx)
+	})
 }
 
 func runActionImpl(step actionStep, actionDir string, remoteAction *remoteAction) common.Executor {
@@ -308,6 +309,12 @@ func execAsDocker(ctx context.Context, step actionStep, actionName, basedir, sub
 				BuildContext: buildContext,
 				Platform:     rc.Config.ContainerArchitecture,
 			})
+			if !localAction && rc.Config.ActionCache == nil {
+				build := prepImage
+				prepImage = func(ctx context.Context) error {
+					return withLegacyActionCheckout(ctx, step, basedir, build)
+				}
+			}
 		} else {
 			logger.Debugf("image '%s' for architecture '%s' already exists", image, rc.Config.ContainerArchitecture)
 		}

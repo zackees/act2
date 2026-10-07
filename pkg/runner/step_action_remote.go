@@ -136,9 +136,20 @@ func (sar *stepActionRemote) prepareActionExecutor() common.Executor {
 		return common.NewPipelineExecutor(
 			ntErr,
 			func(ctx context.Context) error {
-				actionModel, err := sar.readAction(ctx, sar.Step, actionDir, sar.remoteAction.Path, remoteReader(ctx), os.WriteFile)
-				sar.action = actionModel
-				return err
+				return git.WithGitCacheLock(ctx, func(ctx context.Context) error {
+					repo, err := gogit.PlainOpen(actionDir)
+					if err != nil {
+						return err
+					}
+					head, err := repo.Head()
+					if err != nil {
+						return err
+					}
+					sar.resolvedSha = head.Hash().String()
+					actionModel, err := sar.readAction(ctx, sar.Step, actionDir, sar.remoteAction.Path, remoteReader(ctx), os.WriteFile)
+					sar.action = actionModel
+					return err
+				})
 			},
 		)(ctx)
 	}
