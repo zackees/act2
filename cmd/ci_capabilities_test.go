@@ -17,7 +17,7 @@ func TestCICapabilitiesWithoutExecution(t *testing.T) {
 	root := createRootCommand(context.Background(), input, "0.2.89-act2.test")
 	output := &bytes.Buffer{}
 	root.SetOut(output)
-	root.SetArgs([]string{"--ci-capabilities"})
+	root.SetArgs([]string{"--ci-capabilities", "--json", "--ci-output", "precheck/precheck:plan"})
 	if !assert.NoError(t, root.Execute()) {
 		return
 	}
@@ -31,7 +31,8 @@ func TestCICapabilitiesWithoutExecution(t *testing.T) {
 	assert.Equal(t, 1, report.SchemaVersion)
 	assert.Equal(t, "act2", report.Producer)
 	assert.Equal(t, "0.2.89-act2.test", report.Version)
-	assert.ElementsMatch(t, []string{"qualified-job-identity-v1", "step-stage-result-v1"}, report.Capabilities)
+	assert.Equal(t, []string{"precheck/precheck:plan"}, input.ciOutputs)
+	assert.ElementsMatch(t, []string{"qualified-job-identity-v1", "step-stage-result-v1", "selected-job-outputs-v1"}, report.Capabilities)
 }
 
 type rejectedCapabilityWriter struct{}

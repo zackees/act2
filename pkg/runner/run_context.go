@@ -51,8 +51,10 @@ type RunContext struct {
 	Parent              *RunContext
 	Masks               []string
 	cleanUpJobContainer common.Executor
-	cleanupError        error   // Infrastructure failure; job steps may still have succeeded.
-	caller              *caller // job calling this RunContext (reusable workflows)
+	cleanupError        error             // Infrastructure failure; job steps may still have succeeded.
+	ciOutputExpressions map[string]string // Immutable source expressions, captured before matrix execution.
+	ciOutputValues      map[string]string // This concrete job's interpolated values, never shared between legs.
+	caller              *caller           // job calling this RunContext (reusable workflows)
 	Cancelled           bool
 	nodeToolFullPath    string
 }
@@ -689,8 +691,16 @@ func (rc *RunContext) ActionCacheDir() string {
 func (rc *RunContext) interpolateOutputs() common.Executor {
 	return func(ctx context.Context) error {
 		ee := rc.NewExpressionEvaluator(ctx)
-		for k, v := range rc.Run.Job().Outputs {
+		expressions := rc.Run.Job().Outputs
+		if rc.ciOutputExpressions != nil {
+			expressions = rc.ciOutputExpressions
+			rc.ciOutputValues = make(map[string]string, len(rc.ciOutputExpressions))
+		}
+		for k, v := range expressions {
 			interpolated := ee.Interpolate(ctx, v)
+			if rc.ciOutputValues != nil {
+				rc.ciOutputValues[k] = interpolated
+			}
 			if v != interpolated {
 				rc.Run.Job().Outputs[k] = interpolated
 			}

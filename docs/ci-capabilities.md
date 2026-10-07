@@ -17,7 +17,7 @@ version notices. Output failures return an error.
   "schema_version": 1,
   "producer": "act2",
   "version": "<the binary's compiled version>",
-  "capabilities": ["qualified-job-identity-v1", "step-stage-result-v1"]
+  "capabilities": ["qualified-job-identity-v1", "step-stage-result-v1", "selected-job-outputs-v1"]
 }
 ```
 
@@ -36,6 +36,27 @@ including debug-level skipped-step results. They are not a claim that any partic
   terminal `stepResult`. Consumers distinguish Main from Pre/Post, and actual
   execution from a source-excluded skip. Bosn adds its own event sequence and
   assembles the bounded receipt; act2 does not emit a ci-lint attestation.
+- `selected-job-outputs-v1`: `--json --ci-output <job-path>:<output>` requests
+  an interpolated output from that source job path, for example
+  `--ci-output precheck/precheck:plan`. Repeat the flag for additional outputs.
+  A successful concrete job emits one event with `ciOutputSchema: 1`, its
+  existing qualified `jobIdentity`, and `jobOutputs`, an object of requested
+  output names to strings. Caller matrix identities stay attached to each
+  concrete event; leaf IDs and display names never substitute for the path.
+  No flag means no output event. Failed, cancelled, dry-run or cleanup-failed
+  executions emit no output evidence. Invalid or duplicate selectors and
+  requests without `--json` refuse runner configuration.
+
+  Values containing configured secrets, the token or runtime masks refuse the
+  whole payload even with `--insecure-secrets`. Missing requested outputs and
+  payloads exceeding 64 KiB or 256 values also refuse it. A refusal emits
+  `jobOutputsError` instead of values; it cannot qualify output evidence.
+  This is bounded disclosure of explicitly requested outputs, not general
+  information-flow tracking: request only non-secret planner outputs.
+  Consumers still prove the output producer's source and successful checks,
+  reject missing/duplicate/error events, and resolve reusable output mappings
+  from the original workflow. An empty string is an output; an absent event
+  is missing proof. Planner interpretation belongs to ci-lint, not this event.
 
 ## Consumer requirements
 
@@ -54,5 +75,6 @@ or test-pass evidence. Those belong to the enclosing CI protocol.
 The CLI query and output-error tests pass, as do the existing qualified caller
 identity tests. A compiled candidate has returned valid JSON with nonexistent
 Docker and workflow paths. Bosn consumption, compatible release artifacts,
-and the complete local-to-hosted pilot are pending; the current released
-act2.10 binary does not gain this interface from a source change alone.
+and the complete local-to-hosted pilot are pending. Released act2.12 supplies
+the first two capabilities; selected output evidence is a source candidate
+until its compatible release and Bosn receipt consumer are qualified.

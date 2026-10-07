@@ -53,6 +53,7 @@ type Input struct {
 	cacheServerPort                    uint16
 	cachePolicy                        artifactcache.Policy
 	jsonLogger                         bool
+	ciOutputs                          []string
 	noSkipCheckout                     bool
 	remoteName                         string
 	replaceGheActionWithGithubCom      []string
