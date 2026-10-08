@@ -39,3 +39,15 @@ func toolReportError(err error) string {
 func PublishToolSnapshot(ctx context.Context, source, root string, maxBytes int64) ToolSnapshotReport {
 	return publishToolSnapshot(ctx, source, root, maxBytes)
 }
+
+// PlanToolSnapshot validates and hashes a completed source without creating a
+// store, acquiring publication authority, or claiming that an object is warm.
+func PlanToolSnapshot(ctx context.Context, source, root string, maxBytes int64) ToolSnapshotReport {
+	return planToolSnapshot(ctx, source, root, maxBytes)
+}
+
+// PublishPlannedToolSnapshot rejects a source whose canonical object digest no
+// longer matches the plan before creating or modifying the object store.
+func PublishPlannedToolSnapshot(ctx context.Context, source, root string, maxBytes int64, expected string) ToolSnapshotReport {
+	return publishPlannedToolSnapshot(ctx, source, root, maxBytes, expected)
+}

@@ -483,3 +483,18 @@ and relevant CLI tests.
 This capability supports Bosn #545. Bosn still needs its automatic bounded
 manifest-selection policy, version/recipe authority migration, and complete
 shared-volume storage controls before its incident acceptance is complete.
+
+### Measuring a completed install before publication
+
+`cache tool-publish --plan --source-quiescent --from INSTALL --cache-server-path STORE --max-bytes N`
+validates and hashes the completed install using the same canonical manifest as
+publication. It reports the object ID, logical payload bytes and entry count,
+without creating the store, allocating a stage, or claiming that the object is
+published or warm. This is a source observation, not a disk reservation.
+
+A coordinator can admit a bounded subset before copying, then use
+`--apply --source-quiescent --expected-object ID` to publish each admitted
+install. A different canonical source digest is rejected before any store
+mutation. Publication still verifies the copied tree and source; the coordinator
+must exclude source writers continuously. Planning does not grant ownership or
+change reader, generation selection, retirement or storage admission rules.

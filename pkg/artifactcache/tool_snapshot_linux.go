@@ -44,40 +44,27 @@ type toolEntry struct {
 }
 
 func publishToolSnapshot(ctx context.Context, source, root string, maxBytes int64) ToolSnapshotReport {
-	return publishToolSnapshotWithSync(ctx, source, root, maxBytes, syncToolDirectory)
+	return publishToolSnapshotExpected(ctx, source, root, maxBytes, "", syncToolDirectory)
 }
 
 // A per-call sync operation permits testing the uncertain state after rename;
 // it does not alter stage validation or introduce shared mutable test hooks.
 func publishToolSnapshotWithSync(ctx context.Context, source, root string, maxBytes int64, syncRoot func(string) error) (report ToolSnapshotReport) {
-	report = ToolSnapshotReport{SchemaVersion: 1, Source: source}
+	return publishToolSnapshotExpected(ctx, source, root, maxBytes, "", syncRoot)
+}
+
+func publishToolSnapshotExpected(ctx context.Context, source, root string, maxBytes int64, expected string, syncRoot func(string) error) (report ToolSnapshotReport) {
 	ctx, cancel := context.WithTimeout(ctx, 180*time.Second)
 	defer cancel()
-	if err := validateToolSnapshotPaths(source, root, maxBytes); err != nil {
-		report.fail(err)
+	report, manifest, data := inspectToolSnapshot(ctx, source, root, maxBytes)
+	if report.Partial {
 		return report
 	}
-	completion, err := toolSourceCompletion(source)
-	if err != nil {
-		report.fail(err)
+	if expected != "" && report.ID != expected {
+		report.fail(fmt.Errorf("tool source changed since planning"))
 		return report
 	}
-	manifest, total, err := scanToolTree(ctx, source, completion, maxBytes)
-	if err != nil {
-		report.fail(err)
-		return report
-	}
-	data, err := json.Marshal(manifest)
-	if err != nil || len(data) > toolManifestLimit {
-		report.fail(fmt.Errorf("tool manifest invalid or exceeds bound"))
-		return report
-	}
-	digest := sha256.Sum256(data)
-	report.ID = hex.EncodeToString(digest[:])
-	report.Destination = filepath.Join(root, report.ID)
-	report.Completion, report.Bytes = completion, &total
-	count := len(manifest.Entries)
-	report.Entries = &count
+	completion := report.Completion
 	lease, err := prepareToolSnapshotStore(root)
 	if err != nil {
 		report.fail(err)
@@ -312,4 +299,50 @@ func syncToolDirectory(path string) error {
 	}
 	defer file.Close()
 	return file.Sync()
+}
+
+func inspectToolSnapshot(ctx context.Context, source, root string, maxBytes int64) (report ToolSnapshotReport, result toolManifest, encoded []byte) {
+	report = ToolSnapshotReport{SchemaVersion: 1, Source: source}
+	if err := validateToolSnapshotPaths(source, root, maxBytes); err != nil {
+		report.fail(err)
+		return report, toolManifest{}, nil
+	}
+	completion, err := toolSourceCompletion(source)
+	if err != nil {
+		report.fail(err)
+		return report, toolManifest{}, nil
+	}
+	manifest, total, err := scanToolTree(ctx, source, completion, maxBytes)
+	if err != nil {
+		report.fail(err)
+		return report, toolManifest{}, nil
+	}
+	data, err := json.Marshal(manifest)
+	if err != nil || len(data) > toolManifestLimit {
+		report.fail(fmt.Errorf("tool manifest invalid or exceeds bound"))
+		return report, toolManifest{}, nil
+	}
+	digest := sha256.Sum256(data)
+	report.ID = hex.EncodeToString(digest[:])
+	report.Destination = filepath.Join(root, report.ID)
+	report.Completion, report.Bytes = completion, &total
+	count := len(manifest.Entries)
+	report.Entries = &count
+	return report, manifest, data
+}
+
+func planToolSnapshot(ctx context.Context, source, root string, maxBytes int64) ToolSnapshotReport {
+	ctx, cancel := context.WithTimeout(ctx, 180*time.Second)
+	defer cancel()
+	report, _, _ := inspectToolSnapshot(ctx, source, root, maxBytes)
+	return report
+}
+
+func publishPlannedToolSnapshot(ctx context.Context, source, root string, maxBytes int64, expected string) ToolSnapshotReport {
+	if len(expected) != 64 || strings.Trim(expected, "0123456789abcdef") != "" {
+		report := ToolSnapshotReport{SchemaVersion: 1, Source: source}
+		report.fail(fmt.Errorf("expected tool object must be a canonical digest"))
+		return report
+	}
+	return publishToolSnapshotExpected(ctx, source, root, maxBytes, expected, syncToolDirectory)
 }
