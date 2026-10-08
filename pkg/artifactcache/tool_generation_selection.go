@@ -70,3 +70,16 @@ func InitializeToolGeneration(ctx context.Context, root string, installs ToolGen
 func CurrentToolGeneration(ctx context.Context, root string, maxBytes int64) (ToolGenerationSelection, error) {
 	return currentToolGeneration(ctx, root, maxBytes)
 }
+
+// ToolGenerationState describes a verified current selection and its exact
+// install set, observed together under the catalog writer. It is not a reader
+// lease or a promise that the selection will remain unchanged.
+type ToolGenerationState struct {
+	SchemaVersion int                     `json:"schema_version"`
+	ID            string                  `json:"id"`
+	Installs      []ToolGenerationInstall `json:"installs"`
+}
+
+func CurrentToolGenerationState(ctx context.Context, root string, maxBytes int64) (ToolGenerationState, error) {
+	return currentToolGenerationState(ctx, root, maxBytes)
+}

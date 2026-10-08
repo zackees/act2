@@ -20,3 +20,7 @@ func currentToolGeneration(context.Context, string, int64) (ToolGenerationSelect
 func replaceToolGeneration(ctx context.Context, root, _ string, installs ToolGenerationSpec, maxBytes int64) ToolGenerationUpdateReport {
 	return updateToolGeneration(ctx, root, installs, maxBytes, false)
 }
+
+func currentToolGenerationState(context.Context, string, int64) (ToolGenerationState, error) {
+	return ToolGenerationState{}, fmt.Errorf("tool generation selection is supported only on Linux")
+}

@@ -57,6 +57,16 @@ func TestToolSelectionCommandsKeepPriorWarmInstalls(t *testing.T) {
 	var current artifactcache.ToolGenerationSelection
 	require.NoError(t, json.Unmarshal(run("tool-current", "--cache-server-path", store, "--max-bytes", "100"), &current))
 	require.Equal(t, previous.Generation.ID, current.ID)
+	var state struct {
+		SchemaVersion int                                   `json:"schema_version"`
+		ID            string                                `json:"id"`
+		Installs      []artifactcache.ToolGenerationInstall `json:"installs"`
+	}
+	require.NoError(t, json.Unmarshal(run("tool-current", "--installs", "--cache-server-path", store, "--max-bytes", "100"), &state))
+	require.Equal(t, current.ID, state.ID)
+	require.Equal(t, 1, state.SchemaVersion)
+	require.Equal(t, []artifactcache.ToolGenerationInstall{{Path: "Go/1/x64", ObjectID: object.ID}, {Path: "Node/2/x64", ObjectID: object.ID}}, state.Installs)
+
 	for _, path := range []string{"Go/1/x64", "Node/2/x64"} {
 		payload, err := os.ReadFile(filepath.Join(previous.Generation.Destination, "tree", path, "payload"))
 		require.NoError(t, err)
