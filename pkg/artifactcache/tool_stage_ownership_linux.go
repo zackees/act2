@@ -12,7 +12,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -24,6 +23,8 @@ type toolStageOwnership struct {
 	Device        uint64    `json:"device"`
 	Inode         uint64    `json:"inode"`
 	MountID       uint64    `json:"mount_id"`
+	RootDevice    uint64    `json:"root_device,omitempty"`
+	RootInode     uint64    `json:"root_inode,omitempty"`
 	CreatedAt     time.Time `json:"created_at"`
 }
 
@@ -53,53 +54,7 @@ func createOwnedToolStage(_ transferLease, root, parent, prefix string) (string,
 	if len(rows) >= 10000 {
 		return "", fmt.Errorf("stage ownership ledger at capacity")
 	}
-	stage, err := os.MkdirTemp(parent, prefix)
-	if err != nil {
-		return "", err
-	}
-	info, err := os.Lstat(stage)
-	if err != nil {
-		return stage, err
-	}
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok {
-		return stage, fmt.Errorf("stage inode identity unavailable")
-	}
-	relative, err := filepath.Rel(root, stage)
-	if err != nil {
-		return stage, err
-	}
-	row := toolStageOwnership{1, relative, stat.Dev, stat.Ino, mount, time.Now().UTC()}
-	data, err := json.Marshal(row)
-	if err != nil {
-		return stage, err
-	}
-	if err := syncToolDirectory(parent); err != nil {
-		return stage, err
-	}
-	return stage, writeToolStageOwnership(directory, row, data)
-}
-
-func writeToolStageOwnership(directory string, row toolStageOwnership, data []byte) error {
-	path := filepath.Join(directory, toolStageRecordName(row.Relative))
-	// #nosec G703 -- Fixed ownership namespace and SHA-256 record leaf under canonical store; exclusive creation under catalog exclusion.
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-	if err != nil {
-		return err
-	}
-	_, writeErr := file.Write(data)
-	syncErr := file.Sync()
-	closeErr := file.Close()
-	if writeErr != nil {
-		return writeErr
-	}
-	if syncErr != nil {
-		return syncErr
-	}
-	if closeErr != nil {
-		return closeErr
-	}
-	return syncToolDirectory(directory)
+	return allocateOwnedToolStage(root, parent, prefix, directory, mount)
 }
 
 func toolStageRecordName(relative string) string {
@@ -138,6 +93,9 @@ func loadToolStageOwnership(_ transferLease, root string) ([]toolStageOwnership,
 	}
 	if err != nil || !info.IsDir() {
 		return nil, fmt.Errorf("stage ownership namespace invalid")
+	}
+	if err := recoverPendingToolStageRecord(root, directory); err != nil {
+		return nil, err
 	}
 	handle, err := os.Open(directory)
 	if err != nil {
@@ -200,7 +158,7 @@ func forgetOwnedToolStage(_ transferLease, root, relative string) error {
 
 func validateToolStageRecord(row toolStageOwnership, data []byte, name string) error {
 	canonical, err := json.Marshal(row)
-	if err != nil || !bytes.Equal(data, canonical) || row.SchemaVersion != 1 || row.CreatedAt.IsZero() || !validToolStageRelative(row.Relative) || name != toolStageRecordName(row.Relative) {
+	if err != nil || !bytes.Equal(data, canonical) || !validToolStageSchema(row) || row.CreatedAt.IsZero() || !validToolStageRelative(row.Relative) || name != toolStageRecordName(row.Relative) {
 		return fmt.Errorf("invalid stage ownership record")
 	}
 	return nil

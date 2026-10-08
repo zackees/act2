@@ -75,12 +75,8 @@ func retireToolGenerationWithPinsLocked(ctx context.Context, root, id string, ma
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	// Both original locks remain held through unlink and parent-directory sync.
-	// #nosec G703 -- Verified nonsymlink generation beneath canonical store, validated SHA-256 ID, closed tree and fixed control leaves.
-	if err := os.RemoveAll(generation); err != nil {
-		return fmt.Errorf("generation retirement incomplete: %w", err)
-	}
-	return syncToolDirectory(filepath.Join(root, toolGenerationDirectory))
+	// Both original locks remain held through stage registration, rename and removal.
+	return retireToolPublicationLocked(ctx, root, generation)
 }
 
 func verifyToolRetirementLayout(ctx context.Context, root, generation string) error {

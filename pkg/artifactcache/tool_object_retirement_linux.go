@@ -57,11 +57,7 @@ func retireToolObjectLocked(ctx context.Context, root, id string, maxBytes int64
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	// #nosec G703 -- Verified closed object under canonical root and validated SHA-256 ID; original catalog excludes publication/admission.
-	if err := os.RemoveAll(object); err != nil {
-		return fmt.Errorf("object retirement incomplete: %w", err)
-	}
-	return syncToolDirectory(root)
+	return retireToolPublicationLocked(ctx, root, object)
 }
 
 func verifyToolObjectUnreferenced(ctx context.Context, root, id string, maxBytes int64, bound int) error {

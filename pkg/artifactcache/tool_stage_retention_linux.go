@@ -85,9 +85,8 @@ func retireOwnedToolStage(ctx context.Context, catalog transferLease, root strin
 	if !ok || !info.IsDir() || stat.Dev != row.Device || stat.Ino != row.Inode {
 		return false, fmt.Errorf("stage identity changed; replacement preserved")
 	}
-	mount, err := toolMountID(stage)
-	if err != nil || mount != row.MountID {
-		return false, fmt.Errorf("stage mount identity changed")
+	if err := verifyToolStageRoot(root, stage, row); err != nil {
+		return false, err
 	}
 	if err := verifyToolRetirementMounts(ctx, root, stage, toolMountID); err != nil {
 		return false, err
