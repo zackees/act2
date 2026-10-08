@@ -19,8 +19,24 @@ func updateToolGeneration(ctx context.Context, root string, updates ToolGenerati
 	return updateToolGenerationWithSelectionSync(ctx, root, updates, maxBytes, initialize, syncToolDirectory)
 }
 
-func updateToolGenerationWithSelectionSync(ctx context.Context, root string, updates ToolGenerationSpec, maxBytes int64, initialize bool, syncSelection func(string) error) (report ToolGenerationUpdateReport) {
+func replaceToolGeneration(ctx context.Context, root, expectedGeneration string, installs ToolGenerationSpec, maxBytes int64) ToolGenerationUpdateReport {
+	return updateToolGenerationWithMode(ctx, root, installs, maxBytes, toolSelectionReplace, expectedGeneration, syncToolDirectory)
+}
+
+func updateToolGenerationWithSelectionSync(ctx context.Context, root string, updates ToolGenerationSpec, maxBytes int64, initialize bool, syncSelection func(string) error) ToolGenerationUpdateReport {
+	mode := toolSelectionMerge
+	if initialize {
+		mode = toolSelectionInitialize
+	}
+	return updateToolGenerationWithMode(ctx, root, updates, maxBytes, mode, "", syncSelection)
+}
+
+func updateToolGenerationWithMode(ctx context.Context, root string, updates ToolGenerationSpec, maxBytes int64, mode toolSelectionMode, expectedGeneration string, syncSelection func(string) error) (report ToolGenerationUpdateReport) {
 	report.SchemaVersion = 1
+	if err := validateToolSelectionMode(mode, expectedGeneration); err != nil {
+		report.fail(err)
+		return report
+	}
 	ctx, cancel := context.WithTimeout(ctx, 180*time.Second)
 	defer cancel()
 	if _, err := validateToolGenerationSpec(root, updates, maxBytes); err != nil {
@@ -29,7 +45,7 @@ func updateToolGenerationWithSelectionSync(ctx context.Context, root string, upd
 	}
 	var catalog transferLease
 	var err error
-	if initialize {
+	if mode == toolSelectionInitialize {
 		catalog, err = prepareExistingToolSnapshotStore(root)
 	} else {
 		catalog, err = prepareToolGenerationUpdateCatalog(ctx, root)
@@ -42,8 +58,12 @@ func updateToolGenerationWithSelectionSync(ctx context.Context, root string, upd
 	selection, err := readToolGenerationSelection(root)
 	var installs []ToolGenerationInstall
 	if err == nil {
-		if initialize {
+		if mode == toolSelectionInitialize {
 			report.fail(fmt.Errorf("tool generation selection already exists; use ordinary update"))
+			return report
+		}
+		if mode == toolSelectionReplace && selection.ID != expectedGeneration {
+			report.fail(fmt.Errorf("tool replacement selection changed; stale successor preserved"))
 			return report
 		}
 		manifest, verifyErr := verifySelectedToolGeneration(ctx, root, selection, maxBytes)
@@ -51,22 +71,14 @@ func updateToolGenerationWithSelectionSync(ctx context.Context, root string, upd
 			report.fail(verifyErr)
 			return report
 		}
-		installs = manifest.Installs
-	} else if !os.IsNotExist(err) || !initialize {
+		if mode == toolSelectionMerge {
+			installs = manifest.Installs
+		}
+	} else if !os.IsNotExist(err) || mode != toolSelectionInitialize {
 		report.fail(err)
 		return report
 	}
-	merged := make(map[string]ToolGenerationInstall, len(installs)+len(updates.Installs))
-	for _, install := range installs {
-		merged[install.Path] = install
-	}
-	for _, update := range updates.Installs {
-		merged[update.Path] = update
-	}
-	spec := ToolGenerationSpec{SchemaVersion: 1, Installs: make([]ToolGenerationInstall, 0, len(merged))}
-	for _, install := range merged {
-		spec.Installs = append(spec.Installs, install)
-	}
+	spec := mergeToolGenerationInstalls(installs, updates.Installs)
 	installs, err = validateToolGenerationSpec(root, spec, maxBytes)
 	if err != nil {
 		report.fail(err)
@@ -205,4 +217,35 @@ func writeToolGenerationSelection(ctx context.Context, catalog transferLease, ro
 		return false, pending, err
 	}
 	return true, pending, syncSelection(root)
+}
+
+func validateToolSelectionMode(mode toolSelectionMode, expectedGeneration string) error {
+	switch mode {
+	case toolSelectionMerge, toolSelectionInitialize:
+		if expectedGeneration != "" {
+			return fmt.Errorf("expected generation requires replacement")
+		}
+	case toolSelectionReplace:
+		if err := validateToolInstall(ToolGenerationInstall{Path: "selection", ObjectID: expectedGeneration}); err != nil {
+			return fmt.Errorf("replacement requires a valid expected generation: %w", err)
+		}
+	default:
+		return fmt.Errorf("tool selection mode invalid")
+	}
+	return nil
+}
+
+func mergeToolGenerationInstalls(installs, updates []ToolGenerationInstall) ToolGenerationSpec {
+	merged := make(map[string]ToolGenerationInstall, len(installs)+len(updates))
+	for _, install := range installs {
+		merged[install.Path] = install
+	}
+	for _, update := range updates {
+		merged[update.Path] = update
+	}
+	spec := ToolGenerationSpec{SchemaVersion: 1, Installs: make([]ToolGenerationInstall, 0, len(merged))}
+	for _, install := range merged {
+		spec.Installs = append(spec.Installs, install)
+	}
+	return spec
 }

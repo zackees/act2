@@ -454,3 +454,32 @@ verified. Full artifactcache tests and pinned golangci-lint v2.11.4 passed.
 This is a coordinated dependency correction for
 https://github.com/zackees/bosn/issues/545; Bosn's full incident acceptance
 remains separate from these native filesystem proofs.
+
+### Bounded successor selection
+
+Incremental `UpdateToolGeneration` continues to merge completed installs, so
+concurrent callers cannot discard unrelated updates. It cannot rotate versions
+at a full selected-payload ceiling: the old and new versions together exceed
+the generation's byte bound. `ReplaceToolGeneration` and
+`cache tool-update --replace --expected-generation <ID>` provide an explicit
+exact-selection operation for a coordinated, bounded successor manifest.
+The expected ID must be canonical and equal the current selection under the
+original catalog writer. Stale successors, missing selections and oversized
+payloads are refused; replacement never bootstraps missing authority.
+Initialization and replacement are mutually exclusive CLI operations.
+
+Reader-leased prior generations remain immutable. Their payload is eligible
+for ordinary retention only after readers and recovery protections release it.
+A real filesystem regression confirmed a four-byte old selection plus a new
+four-byte version fails through incremental merging, while exact replacement
+selects the new four-byte version, preserves the old reader's bytes, and allows
+normal generation/object retirement after that reader closes. Tests also cover
+stale selection, missing/oversized successor, ordinary merge behavior and CLI
+flag authority. The full artifactcache suite passed with 122 top-level passes;
+all four relevant CLI tests passed; pinned golangci-lint v2.11.4 reports zero
+issues. A final rebuild after the merge-helper refactor passed all generation
+and relevant CLI tests.
+
+This capability supports Bosn #545. Bosn still needs its automatic bounded
+manifest-selection policy, version/recipe authority migration, and complete
+shared-volume storage controls before its incident acceptance is complete.
