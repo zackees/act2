@@ -414,3 +414,43 @@ production enrollment and supervision remain separate integration work.
 The subsequent full artifactcache race suite passed (17.031 seconds); focused
 offline and cutover Cobra tests passed (0.034 seconds). Independent review
 found no blocking issues. Native full CI remains required before release.
+
+## Recoverable tool retirement (Bosn #545)
+
+Tool object and generation retirement now registers the exact directory inode
+and device in the original catalog's durable stage ledger before moving it out
+of the published namespace. The rename refuses replacement, the parent is
+synced, and only then does recursive removal begin. Partial removal can destroy
+a manifest without destroying the ledger's cleanup authority. Selected
+generations, readers, references, recovery pins, and mount checks remain the
+prerequisites for retirement.
+
+Ledger records publish from a fsynced reserved `.pending` leaf through an atomic
+rename; incomplete JSON never becomes a final authority record. Stage creation
+first allocates an empty reserved `.creating` directory, publishes authority,
+and durably moves it into the stage namespace before allowing payload writes.
+Interrupted control allocations are recovered only if empty, nonsymlink,
+mode 0700 and on the current root mount. Unknown or nonempty control state is
+preserved.
+
+New ledger records use schema 2 with durable root device/inode proof. Recovery
+checks this original root and the stage's original device/inode, then verifies
+current mount boundaries throughout the tree. Linux mount IDs are scoped to
+the current helper rather than treated as persistent identity. Schema 1 remains
+readable, but a historical mount mismatch without durable root proof is held.
+Previously damaged published objects without any retirement ledger are also
+preserved; this change does not invent authority for them.
+
+Validation includes real partial object and generation deletion as an
+unprivileged process, interrupted authority writes, changed root proof,
+unexpected control entries, and interruption before publication rename. The
+ordinary Linux permission regression executes without an opt-in; root runs
+spawn the isolated case as an unprivileged child. A separate
+`TestToolRetirementAcrossHelperMountNamespaces` fixture was run in two Docker
+helpers sharing one private volume: the original helper's mount ID was 1257,
+the replacement's was 1071, the missing-manifest stage was removed, and the
+selected generation remained valid. The private volume was removed and absence
+verified. Full artifactcache tests and pinned golangci-lint v2.11.4 passed.
+This is a coordinated dependency correction for
+https://github.com/zackees/bosn/issues/545; Bosn's full incident acceptance
+remains separate from these native filesystem proofs.
