@@ -498,3 +498,9 @@ install. A different canonical source digest is rejected before any store
 mutation. Publication still verifies the copied tree and source; the coordinator
 must exclude source writers continuously. Planning does not grant ownership or
 change reader, generation selection, retirement or storage admission rules.
+
+`cache tool-current --installs` returns schema version, selected generation ID
+and its exact verified install set together under the catalog writer. The
+original command keeps its existing selection-only JSON shape. This observation
+does not hold a reader lease or guarantee the selection will remain current;
+replacement still requires the observed expected generation ID under exclusion.

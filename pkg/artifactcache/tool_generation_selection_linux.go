@@ -102,23 +102,34 @@ func updateToolGenerationWithMode(ctx context.Context, root string, updates Tool
 }
 
 func currentToolGeneration(ctx context.Context, root string, maxBytes int64) (ToolGenerationSelection, error) {
+	state, err := currentToolGenerationState(ctx, root, maxBytes)
+	if err != nil {
+		return ToolGenerationSelection{}, err
+	}
+	return ToolGenerationSelection{SchemaVersion: state.SchemaVersion, ID: state.ID}, nil
+}
+
+func currentToolGenerationState(ctx context.Context, root string, maxBytes int64) (ToolGenerationState, error) {
 	ctx, cancel := context.WithTimeout(ctx, 180*time.Second)
 	defer cancel()
 	guard := ToolGenerationSpec{SchemaVersion: 1, Installs: []ToolGenerationInstall{{Path: "selection", ObjectID: strings.Repeat("0", 64)}}}
 	if _, err := validateToolGenerationSpec(root, guard, maxBytes); err != nil {
-		return ToolGenerationSelection{}, err
+		return ToolGenerationState{}, err
 	}
 	catalog, err := prepareExistingToolSnapshotStore(root)
 	if err != nil {
-		return ToolGenerationSelection{}, err
+		return ToolGenerationState{}, err
 	}
 	defer catalog.Close()
 	selection, err := readToolGenerationSelection(root)
 	if err != nil {
-		return ToolGenerationSelection{}, err
+		return ToolGenerationState{}, err
 	}
-	_, err = verifySelectedToolGeneration(ctx, root, selection, maxBytes)
-	return selection, err
+	manifest, err := verifySelectedToolGeneration(ctx, root, selection, maxBytes)
+	if err != nil {
+		return ToolGenerationState{}, err
+	}
+	return ToolGenerationState{SchemaVersion: 1, ID: selection.ID, Installs: manifest.Installs}, nil
 }
 
 func readToolGenerationSelection(root string) (ToolGenerationSelection, error) {
