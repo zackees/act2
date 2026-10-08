@@ -25,9 +25,9 @@ const (
 )
 
 func newCacheToolMutationCommand(ctx context.Context, input *Input, kind toolGenerationMutationKind) *cobra.Command {
-	var manifestPath string
+	var manifestPath, expectedGeneration string
 	var maxBytes int64
-	var apply, initialize bool
+	var apply, initialize, replace bool
 	use, description := "tool-generation", "Assemble a closed tool generation from immutable install objects"
 	if kind == toolGenerationUpdate {
 		use, description = "tool-update", "Merge closed install updates into the latest selected warm generation"
@@ -36,6 +36,9 @@ func newCacheToolMutationCommand(ctx context.Context, input *Input, kind toolGen
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if !apply {
 				return fmt.Errorf("tool generation mutation requires --apply")
+			}
+			if expectedGeneration != "" && !replace {
+				return fmt.Errorf("expected generation requires --replace")
 			}
 			spec, err := readToolGenerationSpec(manifestPath)
 			if err != nil {
@@ -48,6 +51,8 @@ func newCacheToolMutationCommand(ctx context.Context, input *Input, kind toolGen
 				var report artifactcache.ToolGenerationUpdateReport
 				if initialize {
 					report = artifactcache.InitializeToolGeneration(ctx, input.cacheServerPath, spec, maxBytes)
+				} else if replace {
+					report = artifactcache.ReplaceToolGeneration(ctx, input.cacheServerPath, expectedGeneration, spec, maxBytes)
 				} else {
 					report = artifactcache.UpdateToolGeneration(ctx, input.cacheServerPath, spec, maxBytes)
 				}
@@ -69,6 +74,10 @@ func newCacheToolMutationCommand(ctx context.Context, input *Input, kind toolGen
 	command.Flags().BoolVar(&apply, "apply", false, "Validate objects and publish the requested immutable generation mutation")
 	if kind == toolGenerationUpdate {
 		command.Flags().BoolVar(&initialize, "initialize", false, "Explicitly bootstrap an unset selection; never an automatic missing-cache fallback")
+		command.Flags().BoolVar(&replace, "replace", false, "Select exactly the supplied install set; caller coordinates a bounded complete successor")
+		command.Flags().StringVar(&expectedGeneration, "expected-generation", "", "Selected generation ID that this exact successor replaces; stale selections are refused")
+		command.MarkFlagsMutuallyExclusive("initialize", "replace")
+		command.MarkFlagsRequiredTogether("replace", "expected-generation")
 	}
 	return command
 }

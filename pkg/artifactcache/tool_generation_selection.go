@@ -28,6 +28,27 @@ func (r *ToolGenerationUpdateReport) fail(err error) {
 	r.Partial, r.Error = true, toolReportError(err)
 }
 
+type toolSelectionMode uint8
+
+const (
+	toolSelectionMerge toolSelectionMode = iota
+	toolSelectionInitialize
+	toolSelectionReplace
+)
+
+// ReplaceToolGeneration selects exactly the supplied completed install set.
+// expectedGeneration must match the selection under the original catalog writer.
+// A stale complete manifest cannot overwrite a concurrent selection change.
+// The caller must coordinate its complete successor manifest with other
+// publishers; ordinary incremental updates should use UpdateToolGeneration.
+// Existing selected data must validate. Older generations remain immutable and
+// reader-leased; this operation does not retire their payload or bootstrap a
+// missing selection. It enables bounded warm-cache rollover without implicit
+// eviction from the concurrent merge operation.
+func ReplaceToolGeneration(ctx context.Context, root, expectedGeneration string, installs ToolGenerationSpec, maxBytes int64) ToolGenerationUpdateReport {
+	return replaceToolGeneration(ctx, root, expectedGeneration, installs, maxBytes)
+}
+
 // UpdateToolGeneration merges only supplied install paths into the latest warm
 // selection under catalog exclusion, then durably publishes and selects the
 // successor. Concurrent updates cannot discard unrelated completed installs.
