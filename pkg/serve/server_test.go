@@ -58,13 +58,19 @@ const (
 var limits = Limits{MemoryBytes: 1 << 30, NanoCPUs: 1_000_000_000, Pids: 256}
 
 func start(t *testing.T, maxRuns int) (*Client, *fakeIsolator) {
+	return startWith(t, maxRuns, func(*Config) {})
+}
+
+func startWith(t *testing.T, maxRuns int, configure func(*Config)) (*Client, *fakeIsolator) {
 	t.Helper()
 	dir := t.TempDir()
 	iso := &fakeIsolator{}
-	server, err := NewServer(Config{
+	cfg := Config{
 		Socket: filepath.Join(dir, "s.sock"), RunLabel: "test.run", ScopePrefix: "t-",
 		WorkRoot: filepath.Join(dir, "runs"), PortBase: 40000, MaxRuns: maxRuns, ActBinary: "/bin/sh", Version: "test",
-	}, iso)
+	}
+	configure(&cfg)
+	server, err := NewServer(cfg, iso)
 	require.NoError(t, err)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -103,7 +109,7 @@ func TestAdmissionAllocatesSlotsAndRefusesWhenFull(t *testing.T) {
 	assert.Equal(t, 1, b.Slot)
 	_, err = client.Admit(ctx, AdmitRequest{RunID: runC, Limits: limits})
 	assert.Equal(t, http.StatusServiceUnavailable, status(err))
-	require.NoError(t, client.Close(ctx, runA))
+	require.NoError(t, closeRun(ctx, client, runA))
 	c, err := client.Admit(ctx, AdmitRequest{RunID: runC, Limits: limits})
 	require.NoError(t, err)
 	assert.Equal(t, 0, c.Slot, "a closed run's slot is reused")
@@ -163,14 +169,14 @@ func TestCloseStopsARunningExecAndIsIdempotent(t *testing.T) {
 	<-started
 	_, err := client.Exec(ctx, runA, ExecRequest{Args: []string{"-c", "true"}}, &bytes.Buffer{}, &bytes.Buffer{})
 	assert.Equal(t, http.StatusConflict, status(err), "one exec at a time")
-	require.NoError(t, client.Close(ctx, runA))
+	require.NoError(t, closeRun(ctx, client, runA))
 	select {
 	case end := <-ends:
 		assert.Equal(t, "killed", end.Signal)
 	case <-time.After(10 * time.Second):
 		t.Fatal("close did not stop the exec")
 	}
-	require.NoError(t, client.Close(ctx, runA), "closing again is a no-op")
+	require.NoError(t, closeRun(ctx, client, runA), "closing again is a no-op")
 	health, err := client.Health(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, []string{runB}, health.Runs, "the other run is untouched")
@@ -183,11 +189,11 @@ func TestAFailedCloseKeepsTheRunForARetry(t *testing.T) {
 	_, err := client.Admit(ctx, AdmitRequest{RunID: runA, Limits: limits})
 	require.NoError(t, err)
 	iso.failClose = true
-	assert.Equal(t, http.StatusInternalServerError, status(client.Close(ctx, runA)))
+	assert.Equal(t, http.StatusInternalServerError, status(closeRun(ctx, client, runA)))
 	_, err = client.Admit(ctx, AdmitRequest{RunID: runB, Limits: limits})
 	assert.Equal(t, http.StatusServiceUnavailable, status(err), "the slot stays held")
 	iso.failClose = false
-	require.NoError(t, client.Close(ctx, runA))
+	require.NoError(t, closeRun(ctx, client, runA))
 	_, err = client.Admit(ctx, AdmitRequest{RunID: runB, Limits: limits})
 	require.NoError(t, err)
 }
@@ -219,4 +225,37 @@ func TestARequestedSlotIsHonouredOrRefused(t *testing.T) {
 	a, err := client.Admit(ctx, AdmitRequest{RunID: runA, Limits: limits})
 	require.NoError(t, err)
 	assert.Equal(t, 0, a.Slot)
+}
+
+func closeRun(ctx context.Context, client *Client, id string) error {
+	_, err := client.Close(ctx, id)
+	return err
+}
+
+func TestCloseSavesTheToolCacheOnlyAfterACleanExit(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	client, _ := startWith(t, 2, func(c *Config) {
+		c.ToolCacheStore, c.ToolCacheVolume, c.ToolCacheMount = filepath.Join(dir, "store"), "act-toolcache", filepath.Join(dir, "volume")
+	})
+	for _, run := range []string{runA, runB} {
+		_, err := client.Admit(ctx, AdmitRequest{RunID: run, Limits: limits})
+		require.NoError(t, err)
+	}
+	end, err := client.Exec(ctx, runA, ExecRequest{Args: []string{"-c", "exit 1"}}, &bytes.Buffer{}, &bytes.Buffer{})
+	require.NoError(t, err)
+	assert.Equal(t, 1, end.Code)
+	out, err := client.Close(ctx, runA)
+	require.NoError(t, err)
+	assert.Equal(t, &ToolCacheSave{Saved: true}, out.ToolCache, "a failing workflow still finished cleanly")
+	end, err = client.Exec(ctx, runB, ExecRequest{Args: []string{"-c", "exec sleep 30"}, DeadlineSecs: 1}, &bytes.Buffer{}, &bytes.Buffer{})
+	require.NoError(t, err)
+	assert.True(t, end.TimedOut)
+	out, err = client.Close(ctx, runB)
+	require.NoError(t, err)
+	assert.Equal(t, &ToolCacheSave{Note: "workflow writers are not proven stopped"}, out.ToolCache)
+	health, err := client.Health(ctx)
+	require.NoError(t, err)
+	assert.Empty(t, health.Runs)
+	assert.False(t, health.DockerProxy)
 }

@@ -95,9 +95,25 @@ func (c *Client) Cancel(ctx context.Context, runID string) error {
 	return c.decode(ctx, http.MethodPost, "/v1/runs/"+url.PathEscape(runID)+"/cancel", nil, nil)
 }
 
-// Close removes a run and everything it left.
-func (c *Client) Close(ctx context.Context, runID string) error {
-	return c.decode(ctx, http.MethodDelete, "/v1/runs/"+url.PathEscape(runID), nil, nil)
+// Close removes a run and everything it left, and reports the tool-cache
+// save. A run that is already gone has nothing to report.
+func (c *Client) Close(ctx context.Context, runID string) (CloseReply, error) {
+	var out CloseReply
+	resp, err := c.do(ctx, http.MethodDelete, "/v1/runs/"+url.PathEscape(runID), nil)
+	if err != nil {
+		return out, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNoContent {
+		return out, nil
+	}
+	return out, json.NewDecoder(resp.Body).Decode(&out)
+}
+
+// Prepare loads the runner image and prepares the tool cache.
+func (c *Client) Prepare(ctx context.Context, req PrepareRequest) (PrepareReply, error) {
+	var out PrepareReply
+	return out, c.decode(ctx, http.MethodPost, "/v1/prepare", req, &out)
 }
 
 // Exec runs act in a run's scope, copying its output to stdout and stderr,
