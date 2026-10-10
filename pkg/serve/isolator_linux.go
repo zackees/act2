@@ -92,7 +92,7 @@ func (l *linuxIsolator) Prepare(cmd *exec.Cmd, scope Scope) (func(), error) {
 
 func (l *linuxIsolator) Kill(scope Scope) error {
 	path := filepath.Join(l.cgroup(scope), "act", "cgroup.kill")
-	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) { //nolint:gosec // scope names derive from a validated run key
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
 	return writeFile(path, "1")
