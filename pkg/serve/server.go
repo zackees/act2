@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -29,6 +30,19 @@ type Config struct {
 	MaxRuns     int
 	ActBinary   string
 	Version     string
+	// DockerUpstream is the engine's dockerd socket. With ProxyDir, each run
+	// reaches Docker only through its own proxy at <ProxyDir>/<key>.sock.
+	DockerUpstream string
+	ProxyDir       string
+	// SharedVolumes are named volumes runs share: never keyed or labelled.
+	SharedVolumes []string
+	// ToolCacheStore, when set, is the shared tool-cache store the engine's
+	// tool-cache volume is seeded from and saved to.
+	ToolCacheStore  string
+	ToolCacheVolume string
+	ToolCacheMount  string
+	// Budget, when its Root is set, is applied to the shared cache.
+	Budget Budget
 }
 
 // Validate refuses a configuration whose ports or names cannot work.
@@ -44,6 +58,14 @@ func (c Config) Validate() error {
 		return errors.New("--port-base and --max-runs must keep every port in 1024..65535")
 	case !filepath.IsAbs(c.WorkRoot):
 		return errors.New("--work-root must be absolute")
+	case (c.ProxyDir == "") != (c.DockerUpstream == ""):
+		return errors.New("--docker-proxy-dir and --docker-upstream go together")
+	case c.ProxyDir != "" && !filepath.IsAbs(c.ProxyDir):
+		return errors.New("--docker-proxy-dir must be absolute")
+	case c.ToolCacheStore != "" && (!filepath.IsAbs(c.ToolCacheStore) || !filepath.IsAbs(c.ToolCacheMount) || c.ToolCacheVolume == ""):
+		return errors.New("--toolcache-store and --toolcache-mount must be absolute, with a --toolcache-volume")
+	case c.Budget.Root != "" && (!filepath.IsAbs(c.Budget.Root) || c.Budget.Interval < time.Minute || c.Budget.MaxNamespaces < 1 || c.Budget.Lock == "" || strings.Contains(c.Budget.Lock, "/")):
+		return errors.New("--cache-budget-root must be absolute, with an interval of at least 1m, a namespace limit and a plain lock file name")
 	}
 	return nil
 }
@@ -52,7 +74,11 @@ func (c Config) Validate() error {
 var workDirs = []string{"src", "overlay", "artifacts", "home/.cache", "home/.config", "tmp"}
 
 type run struct {
-	scope   Scope
+	scope Scope
+	proxy *runProxy
+	// clean is set when the last exec ended with act's own exit: not killed,
+	// timed out or failed to start. Only then is the tool cache saved.
+	clean   bool
 	proc    *os.Process
 	killed  bool          // a kill arrived for the current exec
 	execing chan struct{} // closed when the current exec ends; nil when idle
@@ -65,6 +91,11 @@ type Server struct {
 	mu       sync.Mutex
 	runs     map[string]*run
 	slots    []string
+	image    *ImageState
+	budget   *BudgetPass
+	// imageMu serializes image loads; toolMu tool-cache preparation and saves.
+	imageMu sync.Mutex
+	toolMu  sync.Mutex
 }
 
 // NewServer validates cfg and returns an idle server.
@@ -80,6 +111,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/health", s.health)
 	mux.HandleFunc("POST /v1/runs", s.admit)
+	mux.HandleFunc("POST /v1/prepare", s.prepare)
 	mux.HandleFunc("POST /v1/runs/{id}/exec", s.exec)
 	mux.HandleFunc("POST /v1/runs/{id}/cancel", s.cancel)
 	mux.HandleFunc("DELETE /v1/runs/{id}", s.close)
@@ -92,6 +124,10 @@ func (s *Server) Serve(ctx context.Context) error {
 	if err := s.isolator.Reap(ctx); err != nil {
 		return fmt.Errorf("reap previous runs: %w", err)
 	}
+	if s.cfg.ProxyDir != "" {
+		reapSockets(s.cfg.ProxyDir)
+	}
+	go s.runBudget(ctx)
 	if err := os.MkdirAll(filepath.Dir(s.cfg.Socket), 0o700); err != nil {
 		return err
 	}
@@ -132,8 +168,13 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 	for id := range s.runs {
 		runs = append(runs, id)
 	}
+	health := Health{Protocol: ProtocolVersion, Version: s.cfg.Version, MaxRuns: s.cfg.MaxRuns, Runs: runs,
+		DockerProxy: s.cfg.ProxyDir != "", Image: s.image, CacheBudget: s.budget}
 	s.mu.Unlock()
-	reply(w, http.StatusOK, Health{Protocol: ProtocolVersion, Version: s.cfg.Version, MaxRuns: s.cfg.MaxRuns, Runs: runs})
+	if done, err := os.ReadFile(s.readyStamp()); err == nil {
+		health.ToolCache = string(done)
+	}
+	reply(w, http.StatusOK, health)
 }
 
 func (s *Server) scopeFor(runID string, slot int, limits Limits) (Scope, error) {
@@ -152,6 +193,7 @@ func (s *Server) scopeFor(runID string, slot int, limits Limits) (Scope, error) 
 		ArtifactPort: s.cfg.PortBase + 2*slot,
 		CachePort:    s.cfg.PortBase + 2*slot + 1,
 		Limits:       limits,
+		DockerSocket: s.proxySocket(key),
 	}, nil
 }
 
@@ -241,7 +283,28 @@ func (s *Server) open(ctx context.Context, scope Scope) error {
 			return err
 		}
 	}
-	return s.isolator.Open(ctx, scope)
+	if err := s.isolator.Open(ctx, scope); err != nil || s.cfg.ProxyDir == "" {
+		return err
+	}
+	proxy, err := startProxy(s.cfg, scope)
+	if err != nil {
+		return fmt.Errorf("run Docker proxy: %w", err)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if r, ok := s.runs[scope.RunID]; ok {
+		r.proxy = proxy
+	} else {
+		proxy.stop()
+	}
+	return nil
+}
+
+func (s *Server) proxySocket(key string) string {
+	if s.cfg.ProxyDir == "" {
+		return ""
+	}
+	return filepath.Join(s.cfg.ProxyDir, key+".sock")
 }
 
 func (s *Server) lookup(id string) (*run, bool) {
@@ -297,6 +360,10 @@ func (s *Server) exec(w http.ResponseWriter, r *http.Request) {
 	for k, v := range req.Env {
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}
+	if run.scope.DockerSocket != "" {
+		// Last wins: act reaches Docker only through the run's proxy.
+		cmd.Env = append(cmd.Env, "DOCKER_HOST=unix://"+run.scope.DockerSocket)
+	}
 	stream := newFrameWriter(w)
 	cmd.Stdout = stream.writer("stdout")
 	cmd.Stderr = stream.writer("stderr")
@@ -325,7 +392,11 @@ func (s *Server) exec(w http.ResponseWriter, r *http.Request) {
 		defer timer.Stop()
 	}
 	waitErr := cmd.Wait()
-	stream.exit(exitOf(cmd, waitErr, timedOut.Load()))
+	end := exitOf(cmd, waitErr, timedOut.Load())
+	s.mu.Lock()
+	run.clean = !run.killed && !end.TimedOut && end.Error == "" && end.Signal == ""
+	s.mu.Unlock()
+	stream.exit(end)
 }
 
 func exitOf(cmd *exec.Cmd, waitErr error, timedOut bool) Exit {
@@ -386,10 +457,24 @@ func (s *Server) close(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	s.mu.Lock()
+	proxy, clean := run.proxy, run.clean
+	run.proxy = nil
+	s.mu.Unlock()
+	proxy.stop()
 	if err := s.isolator.Close(r.Context(), run.scope); err != nil {
 		fail(w, http.StatusInternalServerError, err)
 		return
 	}
 	s.release(id)
-	w.WriteHeader(http.StatusNoContent)
+	var out CloseReply
+	if s.toolcacheEnabled() {
+		// Saved only once the run's writers are gone.
+		if clean {
+			out.ToolCache = s.saveToolcache(context.WithoutCancel(r.Context()))
+		} else {
+			out.ToolCache = &ToolCacheSave{Note: "workflow writers are not proven stopped"}
+		}
+	}
+	reply(w, http.StatusOK, out)
 }

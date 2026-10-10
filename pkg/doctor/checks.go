@@ -7,6 +7,9 @@ import (
 	"io/fs"
 	"path/filepath"
 	"strings"
+	"time"
+
+	"github.com/nektos/act/pkg/serve"
 )
 
 func dockerChecks(reachable bool, info DockerInfo, opts Options, p Probes) []Check {
@@ -90,5 +93,27 @@ func serveCheck(ctx context.Context, p Probes) Check {
 		return Check{ID: "serve.running", Status: Skip, Summary: "act serve is not running here"}
 	}
 	return Check{ID: "serve.running", Status: Pass,
-		Summary: fmt.Sprintf("act serve %s (protocol %d): %d of %d runs admitted", health.Version, health.Protocol, len(health.Runs), health.MaxRuns)}
+		Summary: fmt.Sprintf("act serve %s (protocol %d): %d of %d runs admitted; %s", health.Version, health.Protocol, len(health.Runs), health.MaxRuns, serveState(health))}
+}
+
+// serveState summarizes what the server owns: the run proxies, the runner
+// image, the tool cache and the shared cache budget.
+func serveState(h serve.Health) string {
+	proxy := "no run proxies"
+	if h.DockerProxy {
+		proxy = "per-run Docker proxies"
+	}
+	image := "runner image not loaded"
+	if h.Image != nil {
+		image = fmt.Sprintf("runner image %s (%s)", h.Image.Tag, h.Image.ID)
+	}
+	tools := "tool cache not prepared"
+	if h.ToolCache != "" {
+		tools = "tool cache " + h.ToolCache
+	}
+	budget := "no cache budget pass"
+	if b := h.CacheBudget; b != nil {
+		budget = fmt.Sprintf("cache budget %s at %s over %d namespaces", b.Status, b.At.Format(time.RFC3339), b.Namespaces)
+	}
+	return strings.Join([]string{proxy, image, tools, budget}, "; ")
 }

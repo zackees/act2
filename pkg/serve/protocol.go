@@ -42,6 +42,8 @@ type Scope struct {
 	ArtifactPort int    `json:"artifact_port"`
 	CachePort    int    `json:"cache_port"`
 	Limits       Limits `json:"limits"`
+	// DockerSocket is the run's Docker proxy, when the server runs one.
+	DockerSocket string `json:"docker_socket,omitempty"`
 }
 
 // ExecRequest starts act in an admitted run's scope.
@@ -72,6 +74,15 @@ type Health struct {
 	Version  string   `json:"version"`
 	MaxRuns  int      `json:"max_runs"`
 	Runs     []string `json:"runs"`
+	// DockerProxy says each run reaches Docker through its own proxy.
+	DockerProxy bool `json:"docker_proxy"`
+	// Image is the runner image loaded and proved, once prepared.
+	Image *ImageState `json:"image,omitempty"`
+	// ToolCache is how the tool cache was prepared ("seeded" or
+	// "generation <id>"), once it was.
+	ToolCache string `json:"tool_cache,omitempty"`
+	// CacheBudget is the last shared-cache budget pass.
+	CacheBudget *BudgetPass `json:"cache_budget,omitempty"`
 }
 
 // ErrorBody is every non-2xx response.
