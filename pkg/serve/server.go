@@ -166,7 +166,13 @@ func (s *Server) reserve(req AdmitRequest) (Scope, bool, int, error) {
 		return existing.scope, true, http.StatusOK, nil
 	}
 	for slot, holder := range s.slots {
+		if req.Slot != nil && *req.Slot != slot {
+			continue
+		}
 		if holder != "" {
+			if req.Slot != nil {
+				return Scope{}, false, http.StatusConflict, fmt.Errorf("slot %d is taken", slot)
+			}
 			continue
 		}
 		scope, err := s.scopeFor(req.RunID, slot, req.Limits)
@@ -181,6 +187,9 @@ func (s *Server) reserve(req AdmitRequest) (Scope, bool, int, error) {
 		s.slots[slot] = req.RunID
 		s.runs[req.RunID] = &run{scope: scope}
 		return scope, false, http.StatusCreated, nil
+	}
+	if req.Slot != nil {
+		return Scope{}, false, http.StatusConflict, fmt.Errorf("slot %d is out of range", *req.Slot)
 	}
 	return Scope{}, false, http.StatusServiceUnavailable, fmt.Errorf("all %d run slots are taken", len(s.slots))
 }

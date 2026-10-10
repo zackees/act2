@@ -26,6 +26,9 @@ type Limits struct {
 type AdmitRequest struct {
 	RunID  string `json:"run_id"`
 	Limits Limits `json:"limits"`
+	// Slot, when set, asks for that slot; it is refused (409) when taken
+	// or out of range. A caller that already leases slots keeps its ports.
+	Slot *int `json:"slot,omitempty"`
 }
 
 // Scope is everything one admitted run owns inside the engine.

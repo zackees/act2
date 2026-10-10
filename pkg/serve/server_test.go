@@ -202,3 +202,21 @@ func (s signalWriter) Write(p []byte) (int, error) {
 	}
 	return len(p), nil
 }
+
+func TestARequestedSlotIsHonouredOrRefused(t *testing.T) {
+	ctx := context.Background()
+	client, _ := start(t, 3)
+	two := 2
+	b, err := client.Admit(ctx, AdmitRequest{RunID: runB, Limits: limits, Slot: &two})
+	require.NoError(t, err)
+	assert.Equal(t, 2, b.Slot)
+	assert.Equal(t, 40004, b.ArtifactPort)
+	_, err = client.Admit(ctx, AdmitRequest{RunID: runC, Limits: limits, Slot: &two})
+	assert.Equal(t, http.StatusConflict, status(err), "taken")
+	nine := 9
+	_, err = client.Admit(ctx, AdmitRequest{RunID: runC, Limits: limits, Slot: &nine})
+	assert.Equal(t, http.StatusConflict, status(err), "out of range")
+	a, err := client.Admit(ctx, AdmitRequest{RunID: runA, Limits: limits})
+	require.NoError(t, err)
+	assert.Equal(t, 0, a.Slot)
+}
