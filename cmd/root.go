@@ -142,6 +142,7 @@ func createRootCommand(ctx context.Context, input *Input, version string) *cobra
 	rootCmd.PersistentFlags().IntVar(&input.concurrentJobs, "concurrent-jobs", 0, "Maximum number of concurrent jobs to run. Default is the number of CPUs available.")
 	rootCmd.SetArgs(args())
 	rootCmd.AddCommand(newCacheCommand(ctx, input))
+	rootCmd.AddCommand(newServeCommand(ctx, version))
 	return rootCmd
 }
 
@@ -163,7 +164,13 @@ func configLocations() []string {
 	return []string{specPath, homePath, invocationPath}
 }
 
+// serviceCommands take no workflow flags, so .actrc never applies to them.
+var serviceCommands = map[string]bool{"cache": true, "serve": true, "doctor": true}
+
 func args() []string {
+	if len(os.Args) > 1 && serviceCommands[os.Args[1]] {
+		return os.Args[1:]
+	}
 	actrc := configLocations()
 
 	args := make([]string, 0)
