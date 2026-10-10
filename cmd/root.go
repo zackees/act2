@@ -143,6 +143,7 @@ func createRootCommand(ctx context.Context, input *Input, version string) *cobra
 	rootCmd.SetArgs(args())
 	rootCmd.AddCommand(newCacheCommand(ctx, input))
 	rootCmd.AddCommand(newServeCommand(ctx, version))
+	rootCmd.AddCommand(newDoctorCommand(ctx))
 	return rootCmd
 }
 
